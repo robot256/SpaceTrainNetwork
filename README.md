@@ -13,7 +13,7 @@ To minimize inter-surface transits, once a train has changed surfaces and delive
 
 Actually performing the inter-surface transits typically requires adding special entries to the train's schedule. The dispatching mod must keep a database of the schedule entries needed to travel between each pair of surfaces. Different transits may have different in-game costs, and those should be accounted for when choosing the best source for each material. The player should also be able to assign priority values that override that cost, if particular routes are desired. 
 
-Complications arise when connected surfaces include multiple disconnected rail networks. In the most generalized implementation, the mod would need to follow the rail paths and generate its own list of which stops are accessible from which transit points. There could be paths that start and end on the same surface, but must make multiple transits. Automatic network traversal will be important for use with the Train Tunnels mod, but is probably not needed with Space Exploration.
+Complications arise when connected surfaces include multiple disconnected rail networks. In the most generalized implementation, the mod would need to follow the rail paths and generate its own list of which stops are accessible from which transit points. There could be paths that start and end on the same surface, but must make multiple transits. Automatic network discovery will be important for use with the Train Tunnels mod, but is probably not needed with Space Exploration.
 
 
 
@@ -26,8 +26,8 @@ Routing features:
 - No train length or rolling stock detection whatsoever
 - Set limits on incoming trains for each stop (depot is always limit of1)
 - Set priority on all stops including depots
-- Priority can force intersurface transit even if a destination is available on this surface
-- Should there be intrasurface priority as well. Seems logical. How to differentiate levels of priority? Perhaps each transit subtracts 100 from priority, so a priority of 200 that is 2 transits away would be treated the same as a stop on the same surface with priority 0. Or should transits be treated like distance?
+- Priority can force inter-surface transit even if a destination is available on this surface
+- Should there be intra-surface priority as well. Seems logical. How to differentiate levels of priority? Perhaps each transit subtracts 100 from priority, so a priority of 200 that is 2 transits away would be treated the same as a stop on the same surface with priority 0. Or should transits be treated like distance?
 - Allow stops with the same name?  This is complicated because coordinate-based temporary stops cannot be added until the train has completed its final transit.
 
 
