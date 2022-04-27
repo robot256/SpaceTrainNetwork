@@ -11,25 +11,10 @@ Vanilla train limits let trains "reserve" stations like signal blocks, so that t
 
 To minimize inter-surface transits, once a train has changed surfaces and delivered materials, it should not automatically return entry. Instead, it should go to a depot on the new surface and wait for materials to load for the return trip. But if one surface is lacking empty trains in its depot, an empty train may need to transit to pickup materials or to wait in the other depot.
 
-Actually performing the inter-surface transits typically requires adding special stops to the train's schedule. The dispatching mod must keep track of the schedule entries needed to travel between each pair of surfaces.
+Actually performing the inter-surface transits typically requires adding special entries to the train's schedule. The dispatching mod must keep a database of the schedule entries needed to travel between each pair of surfaces. Different transits may have different in-game costs, and those should be accounted for when choosing the best source for each material. The player should also be able to assign priority values that override that cost, if particular routes are desired. 
 
-Goal:
-Route trains automatically through space elevator in a train system mostly governed by vanilla train limits
+Complications arise when connected surfaces include multiple disconnected rail networks. In the most generalized implementation, the mod would need to follow the rail paths and generate its own list of which stops are accessible from which transit points. There could be paths that start and end on the same surface, but must make multiple transits. Automatic network traversal will be important for use with the Train Tunnels mod, but is probably not needed with Space Exploration.
 
-Problem:. When destinations on surface and orbit have same name, train will only go to ones on same surface.
-Problem: elevator commands must be added manually to each schedule
-
-Solution: Detect when train has no destinations available on this surface, and one is availabile on the other, and add elevator command
-
-Problem: Reservation on orbit surface is not claimed until train exits elevator, so other train in orbit could claim it first.
-
-This is the only reason why using LTN for space elevator is needed.
-
-Solution: keep mod routing table of trains en route instead of, or in addition to, vanilla train limits.
-
-Problem: Depots on nearest surface might be full.
-
-Solution: use same algo as finding source material to find depot space. Reserve depot spots like pickup materials.
 
 
 Routing features:
@@ -42,8 +27,8 @@ Routing features:
 - Set limits on incoming trains for each stop (depot is always limit of1)
 - Set priority on all stops including depots
 - Priority can force intersurface transit even if a destination is available on this surface
-- Should there be intrasurface priority as well?
-- Temporary stops? Probably not, since it makes elevators complicated
+- Should there be intrasurface priority as well. Seems logical. How to differentiate levels of priority? Perhaps each transit subtracts 100 from priority, so a priority of 200 that is 2 transits away would be treated the same as a stop on the same surface with priority 0. Or should transits be treated like distance?
+- Allow stops with the same name?  This is complicated because coordinate-based temporary stops cannot be added until the train has completed its final transit.
 
 
 Stop data storage:
@@ -63,5 +48,4 @@ Stop data storage:
 Dispatched train data storage:
 - Train ID
 - Destination stop UID
-- 
 
