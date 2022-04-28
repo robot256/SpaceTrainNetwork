@@ -15,7 +15,7 @@ Actually performing the inter-surface transits typically requires adding special
 
 Complications arise when connected surfaces include multiple disconnected rail networks. In the most generalized implementation, the mod would need to follow the rail paths and generate its own list of which stops are accessible from which transit points. There could be paths that start and end on the same surface, but must make multiple transits. Automatic network discovery will be important for use with the Train Tunnels mod, but is probably not needed with Space Exploration.
 
-
+The final consideration is to limit the learning curve needed. LTN has been around long enough that lots of people know how to use it, but I'd like it to be accessible to more than just LTN veterans.
 
 Routing features:
 - Basic: stops can provide and/or request, or depot, or maintenance.
