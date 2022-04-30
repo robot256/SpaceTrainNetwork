@@ -18,8 +18,8 @@
 util = require("util")
 
 
-local function FindAccessibleSurfaces(surface)
-  
+-- Crude search for matching a planet/moon surface with its orbit.  Assume that if Proxy Stop is placed, there is an elevator to use.
+local function FindAdjacentSurfaces(surface)
   local results = {}
   
   local current_zone = remote.call("space-exploration", "get_zone_from_surface_index", {surface_index=surface.index})
@@ -27,7 +27,6 @@ local function FindAccessibleSurfaces(surface)
   local orbit_zone
   local other_zone
   local train_on_surface = false
-  
   
   if (current_zone.type == "planet" or current_zone.type == "moon") and current_zone.orbit_index then
     planet_zone = current_zone
@@ -54,13 +53,12 @@ local function FindAccessibleSurfaces(surface)
   end
   
   return results
-  
 end
 
 local function FindHostStop(proxy_stop)
 
   local surface = proxy_stop.surface
-  local nearby_surfaces = FindAccessibleSurfaces(surface)
+  local nearby_surfaces = FindAdjacentSurfaces(surface)
   
   -- Find corresponding actual LTN stop (This needs to be cached)
   local matching_stops = {}
@@ -73,30 +71,36 @@ local function FindHostStop(proxy_stop)
     end
   end
 
-  
-
-
 end
 
 -- Register a Global or Proxy stop in the database
-local function AddStop(entity)
+local function RegisterStop(entity)
   local name = entity.backer_name
   
   if entity.name == "global-train-stop" then
-    if not global.GlobalTrainStops[entity.unit_number] then
-      global.GlobalTrainStops[entity.unit_number] = {
+    if not global.GlobalStops[entity.unit_number] then
+      game.print("Adding Global stop to list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
+      global.GlobalStops[entity.unit_number] = {
         entity = entity,
-        unit_number = entity.unit_number
+        unit_number = entity.unit_number,
+        group = name
       }
-      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}}
+      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}, trains={}}
       global.StopGroups[name].global_stops[entity.unit_number] = {
         entity = entity,
         unit_number = entity.unit_number
       }
     end
   elseif entity.name == "proxy-train-stop" then
-    if not global.ProxyTrainStops[entity.unit_number] then
-      global.ProxyTrainStops[entity.unit_number] = {
+    if not global.ProxyStops[entity.unit_number] then
+      game.print("Adding Proxy stop to list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
+      global.ProxyStops[entity.unit_number] = {
+        entity = entity,
+        unit_number = entity.unit_number,
+        group = name
+      }
+      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}, trains={}}
+      global.StopGroups[name].proxy_stops[entity.unit_number] = {
         entity = entity,
         unit_number = entity.unit_number
       }
@@ -104,45 +108,78 @@ local function AddStop(entity)
   end
 end
 
-local function RemoveProxyStop(name, entity)
-  game.print("Removing Proxy stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
-  global.ProxyTrainStops[name] = nil
+local function UnregisterStop(name, entity)
+  if entity.name == "global-train-stop" then
+    game.print("Removing Global stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
+    if global.StopGroups[name] then
+      global.StopGroups[name].global_stops[entity.unit_number] = nil
+    end
+    global.GlobalStops[entity.unit_number] = nil
+  elseif entity.name == "proxy-train-stop" then
+    game.print("Removing Proxy stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
+    if global.StopGroups[name] then
+      global.StopGroups[name].proxy_stops[entity.unit_number] = nil
+    end
+    global.ProxyStops[entity.unit_number] = nil
+  end
 end
 
 function OnEntityCreated(event)
   local entity = event.created_entity or event.entity or event.destination
-  if not entity or not entity.valid then return end
-  if not (entity.name == 'ltn-proxy-train-stop') then return end
-  AddProxyStop(entity)
+  RegisterStop(entity)
 end
 
 function OnEntityRemoved(event)
   local entity = event.entity
-  if not entity or not entity.valid then return end
-  if not (entity.name == 'ltn-proxy-train-stop') then return end
-  RemoveProxyStop(entity.backer_name, entity)
+  UnregisterStop(entity.backer_name, entity)
 end
-
 
 -- remove stop references when deleting surfaces
 function OnSurfaceRemoved(event)
-  local surfaceID = event.surface_index
-  local surface = game.surfaces[surfaceID]
+  local surface = game.surfaces[event.surface_index]
   if surface then
-    local train_stops = surface.find_entities_filtered{name = "ltn-proxy-train-stop"}
+    local train_stops = surface.get_train_stops{name = {"global-train-stop", "proxy-train-stop"}}
     for _, entity in pairs(train_stops) do
-      RemoveProxyStop(entity.backer_name, entity)
+      UnregisterStop(entity.backer_name, entity)
     end
   end
 end
 
-
+-- Reassign group when station is renamed
 function OnEntityRenamed(event)
-  local oldName = event.old_name
-  local newName = event.entity.backer_name
-  if event.entity.name == 'ltn-proxy-train-stop' then
-    RemoveProxyStop(oldName, event.entity)
-    AddProxyStop(event.entity)
+  local entity = event.entity
+  if entity.name == "global-train-stop" then
+    local oldName = event.old_name
+    local newName = entity.backer_name
+    local unit_number = entity.unit_number
+    if global.StopGroups[oldName] then
+      global.StopGroups[oldName].global_stops[unit_number] = nil
+      if not next(global.StopGroups[oldName].global_stops) and not next(global.StopGroups[oldName].proxy_stops) then
+        global.StopGroups[oldName] = nil
+      end
+    end
+    global.StopGroups[newName] = global.StopGroups[newName] or {global_stops={}, proxy_stops={}, trains={}}
+    global.StopGroups[newName].global_stops[unit_number] = {
+      entity = entity,
+      unit_number = unit_number
+    }
+    global.GlobalStops[unit_number].group = newName
+  elseif entity.name == "proxy-train-stop" then
+    local oldName = event.old_name
+    local newName = entity.backer_name
+    local unit_number = entity.unit_number
+    if global.StopGroups[oldName] then
+      global.StopGroups[oldName].proxy_stops[unit_number] = nil
+      if not next(global.StopGroups[oldName].global_stops) and not next(global.StopGroups[oldName].proxy_stops) then
+        global.StopGroups[oldName] = nil
+      end
+    end
+    global.StopGroups[newName] = global.StopGroups[newName] or {global_stops={}, proxy_stops={}, trains={}}
+    global.StopGroups[newName].global_stops[unit_number] = {
+      entity = entity,
+      unit_number = unit_number
+    }
+    global.ProxyStops[unit_number].group = newName
   end
 end
 
@@ -202,8 +239,8 @@ local function ProcessTrainSchedule(train, cargo)
         --game.print("already added proxies in "..train.id)
         return
       end
-      if record.station and global.ProxyTrainStops[record.station] then
-        table.insert(proxies, {idx,global.ProxyTrainStops[record.station].entity} )
+      if record.station and global.ProxyStops[record.station] then
+        table.insert(proxies, {idx,global.ProxyStops[record.station].entity} )
       end
     end
     
@@ -335,7 +372,7 @@ function FindAllStops()
   for _,surface in pairs(game.surfaces) do
     local global_stops = surface.get_train_stops{name={"global-train-stop", "proxy-train-stop"}}
     for _,stop in pairs(global_stops) do
-      AddStop(stop)
+      RegisterStop(stop)
     end
   end
 end
@@ -343,8 +380,8 @@ end
 
 local function initGlobals()
   global.GlobalStopGroups = global.GlobalStopGroups or {}  -- Index by stop name
-  global.GlobalTrainStops = global.GlobalTrainStops or {}  -- Index by unit ID
-  global.ProxyTrainStops = global.ProxyTrainStops or {}    -- Index by unit ID
+  global.GlobalStops = global.GlobalStops or {}  -- Index by unit ID
+  global.ProxyStops = global.ProxyStops or {}    -- Index by unit ID
   
   FindAllStops()
 
