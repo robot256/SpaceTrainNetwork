@@ -1,0 +1,396 @@
+
+
+
+-- Goal:
+--   When a Proxy stop has the same name as a Logistic stop on a different surface,
+--     And a train routes to the Logistic stop,
+--     Replace the temporary stop to the unreachable Logistic stop with the combination of a space elevator destination
+---       and a new temporary stop at the corresponding stop in orbit.
+--   Intentional limitations:
+--     This will only work for Logistic and Proxy stops that share an otherwise unique name.
+--     This will only work for Logistic and Proxy stops on surfaces linked by a space elevator.
+--     This will only work if it is guaranteed that, after going up an arbitrary space elevator, the Proxy stop is in fact reachable.
+
+
+
+-- Maintain a list of ltn-proxy-train-stop entities, and their corresponding logistic-train-stop entities, if any
+
+util = require("util")
+
+
+local function FindAccessibleSurfaces(surface)
+  
+  local results = {}
+  
+  local current_zone = remote.call("space-exploration", "get_zone_from_surface_index", {surface_index=surface.index})
+  local planet_zone
+  local orbit_zone
+  local other_zone
+  local train_on_surface = false
+  
+  
+  if (current_zone.type == "planet" or current_zone.type == "moon") and current_zone.orbit_index then
+    planet_zone = current_zone
+    orbit_zone = remote.call("space-exploration", "get_zone_from_zone_index", {zone_index=current_zone.orbit_index})
+    train_on_surface = true
+  elseif current_zone.type == "orbit" then
+    local parent_zone = remote.call("space-exploration", "get_zone_from_zone_index", {zone_index=current_zone.parent_index})
+    if parent_zone.type == "planet" or parent_zone.type == "moon" then
+      planet_zone = parent_zone
+      orbit_zone = current_zone
+    end
+  else
+    other_zone = current_zone
+  end
+  
+  if planet_zone then
+    results.planet = remote.call("space-exploration", "zone_get_surface", {zone_index = planet_zone.index})
+  end
+  if orbit_zone then
+    results.orbit = remote.call("space-exploration", "zone_get_surface", {zone_index = orbit_zone.index})
+  end
+  if other_zone then
+    results.other = surface
+  end
+  
+  return results
+  
+end
+
+local function FindHostStop(proxy_stop)
+
+  local surface = proxy_stop.surface
+  local nearby_surfaces = FindAccessibleSurfaces(surface)
+  
+  -- Find corresponding actual LTN stop (This needs to be cached)
+  local matching_stops = {}
+  for _,surface in pairs(nearby_surfaces) do
+    local stops = surface.find_entities_filtered{name="logistic-train-stop"}
+    for _,stop in pairs(stops) do
+      if stop.backer_name == proxy_stop.backer_name then
+        table.insert(matching_stops,stop)
+      end
+    end
+  end
+
+  
+
+
+end
+
+-- Register a Global or Proxy stop in the database
+local function AddStop(entity)
+  local name = entity.backer_name
+  
+  if entity.name == "global-train-stop" then
+    if not global.GlobalTrainStops[entity.unit_number] then
+      global.GlobalTrainStops[entity.unit_number] = {
+        entity = entity,
+        unit_number = entity.unit_number
+      }
+      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}}
+      global.StopGroups[name].global_stops[entity.unit_number] = {
+        entity = entity,
+        unit_number = entity.unit_number
+      }
+    end
+  elseif entity.name == "proxy-train-stop" then
+    if not global.ProxyTrainStops[entity.unit_number] then
+      global.ProxyTrainStops[entity.unit_number] = {
+        entity = entity,
+        unit_number = entity.unit_number
+      }
+    end
+  end
+end
+
+local function RemoveProxyStop(name, entity)
+  game.print("Removing Proxy stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
+  global.ProxyTrainStops[name] = nil
+end
+
+function OnEntityCreated(event)
+  local entity = event.created_entity or event.entity or event.destination
+  if not entity or not entity.valid then return end
+  if not (entity.name == 'ltn-proxy-train-stop') then return end
+  AddProxyStop(entity)
+end
+
+function OnEntityRemoved(event)
+  local entity = event.entity
+  if not entity or not entity.valid then return end
+  if not (entity.name == 'ltn-proxy-train-stop') then return end
+  RemoveProxyStop(entity.backer_name, entity)
+end
+
+
+-- remove stop references when deleting surfaces
+function OnSurfaceRemoved(event)
+  local surfaceID = event.surface_index
+  local surface = game.surfaces[surfaceID]
+  if surface then
+    local train_stops = surface.find_entities_filtered{name = "ltn-proxy-train-stop"}
+    for _, entity in pairs(train_stops) do
+      RemoveProxyStop(entity.backer_name, entity)
+    end
+  end
+end
+
+
+function OnEntityRenamed(event)
+  local oldName = event.old_name
+  local newName = event.entity.backer_name
+  if event.entity.name == 'ltn-proxy-train-stop' then
+    RemoveProxyStop(oldName, event.entity)
+    AddProxyStop(event.entity)
+  end
+end
+
+
+
+local function ProcessTrainSchedule(train, cargo)
+
+  -- Find which zone is planet and which is orbit, and which one we start on
+  local planet_zone = nil
+  local orbit_zone = nil
+  local train_on_surface = nil
+  
+  local current_zone = remote.call("space-exploration", "get_zone_from_surface_index", {surface_index=train.front_stock.surface.index})
+  
+  if (current_zone.type == "planet" or current_zone.type == "moon") and current_zone.orbit_index then
+    planet_zone = current_zone
+    orbit_zone = remote.call("space-exploration", "get_zone_from_zone_index", {zone_index=current_zone.orbit_index})
+    train_on_surface = true
+  elseif current_zone.type == "orbit" then
+    local parent_zone = remote.call("space-exploration", "get_zone_from_zone_index", {zone_index=current_zone.parent_index})
+    if parent_zone.type == "planet" or parent_zone.type == "moon" then
+      planet_zone = parent_zone
+      orbit_zone = current_zone
+      train_on_surface = false
+    end
+  end
+  
+  local starts_on_surface = train_on_surface
+  
+  -- If we're in asteroids, there is no elevator
+  if planet_zone == nil then
+    --game.print("Can't find matching planet/moon. Currently in "..current_zone.name.." which is a "..current_zone.type)
+    return
+  end
+  
+  if orbit_zone == nil then
+    --game.print("Can't find matching orbit. Currently in "..current_zone.name.." which is a "..current_zone.type)
+    return
+  end
+  
+  local upward_elevator = "[img=entity/se-space-elevator]  " .. planet_zone.name .. " ↑"
+  local downward_elevator = "[img=entity/se-space-elevator]  " .. planet_zone.name .. " ↓"
+  local planet_surface = remote.call("space-exploration", "zone_get_surface", {zone_index = planet_zone.index})
+  local orbit_surface = remote.call("space-exploration", "zone_get_surface", {zone_index = orbit_zone.index})
+  local up_record = {station = upward_elevator, wait_conditions = {{compare_type = "and",ticks = 0,type = "time"}} }
+  local down_record = {station = downward_elevator, wait_conditions = {{compare_type = "and",ticks = 0,type = "time"}} }
+  
+  -- Scan schedule for proxy stops.
+  -- If any of them are on a different surface than the train is now, try to add elevator stops to schedule
+  local schedule = train.schedule
+  if schedule and schedule.records and #schedule.records>0 then
+    
+    -- If there are already elevator commands, don't touch this train
+    local proxies = {}
+    for idx, record in pairs(schedule.records) do
+      if record.station and (record.station == upward_elevator or record.station == downward_elevator) then
+        --game.print("already added proxies in "..train.id)
+        return
+      end
+      if record.station and global.ProxyTrainStops[record.station] then
+        table.insert(proxies, {idx,global.ProxyTrainStops[record.station].entity} )
+      end
+    end
+    
+    -- Exit if there are no proxy stations in schedule
+    if #proxies == 0 then 
+      --game.print("found no proxies in "..train.id)
+      return 
+    end
+    --game.print("found "..#proxies.." proxies in "..train.id..": "..tostring(proxies))
+    
+    -- For each proxy in the schedule, see if we need to change surfaces
+    local idxs = 0
+    local changed = false
+    for _,prec in pairs(proxies) do
+      local pidx = prec[1] + idxs
+      local proxy = prec[2]
+      
+      -- New rail-target 
+      local stop_on_surface = (proxy.surface == planet_surface)
+      local stop_in_orbit = (proxy.surface == orbit_surface)
+      
+      --log("Adding proxy for station "..proxy.backer_name..","..tostring(train_on_surface)..","..
+      --          tostring(stop_on_surface)..","..tostring(stop_in_orbit))
+      
+      if train_on_surface and stop_in_orbit then
+        --log("trying to get DOWN from #"..tostring(pidx)..", which is now "..tostring(prec[1]+idxs))
+        -- add a DOWN after this stop
+        table.insert(schedule.records, pidx+1, util.table.deepcopy(down_record))
+        idxs = idxs + 1
+        changed = true
+        -- get the train UP somehow
+        if pidx>1 and schedule.records[pidx-1].rail then
+          if pidx>2 and schedule.records[pidx-2].station and schedule.records[pidx-2].station == downward_elevator then
+            -- remove the temporary stop and the previous DOWN command
+            --log("trying to remove DOWN and TEMP prior to #"..tostring(pidx))
+            table.remove(schedule.records, pidx-2)
+            table.remove(schedule.records, pidx-2)
+            idxs = -2
+          else
+            -- Change the temporary stop to UP
+            schedule.records[pidx-1] = util.table.deepcopy(up_record)
+            --log("trying to get UP for #"..tostring(pidx)..". changed temporary to UP stop")
+          end
+        end
+        --log("\n"..serpent.block(schedule))
+        
+      elseif not train_on_surface and stop_on_surface then
+        --log("trying to get UP from #"..tostring(pidx)..", which is now "..tostring(prec[1]+idxs))
+        -- add a UP after this stop
+        table.insert(schedule.records, pidx+1, util.table.deepcopy(up_record))
+        idxs = idxs + 1
+        changed = true
+        -- get the train DOWN somehow
+        if pidx>1 and schedule.records[pidx-1].rail then
+          if pidx>2 and schedule.records[pidx-2].station and schedule.records[pidx-2].station == upward_elevator then
+            -- remove the temporary stop and the previous UP command
+            --log("trying to remove UP and TEMP prior to #"..tostring(pidx))
+            table.remove(schedule.records, pidx-2)
+            table.remove(schedule.records, pidx-2)
+            idxs = -2
+          else
+            -- Change the temporary stop to DOWN
+            schedule.records[pidx-1] = util.table.deepcopy(down_record)
+            --log("trying to get UP for #"..tostring(pidx)..". changed temporary to DOWN stop")
+          end
+        end
+        --log("\n"..serpent.block(schedule))
+      end
+    end
+    
+    if changed then
+      --log("\nNEW SCHEDULE:\n"..serpent.block(schedule))
+      if cargo then
+        local t,name = cargo:match("([^,]+),([^,]+)")
+        game.print("[LTN-MSS] Routing delivery of ["..t.."="..name.."] through "..current_zone.name.." space elevator.")
+      else
+        game.print({"","[LTN-MSS] Routing delivery through "..current_zone.name.." space elevator."})
+      end
+      train.schedule = schedule
+    end
+  end
+end
+
+--[[
+function OnScheduleChanged(event)
+  -- don't mess with manual schedule changes
+  if event.player ~= nil then
+    return
+  end
+  if not (event.train and event.train.valid) then
+    return
+  end
+  ProcessTrainSchedule(event.train)
+end
+--]]
+
+
+
+function OnTrainChangedState(event)
+  local train = event.train
+  
+  -- Tell LTN when we arrive at a proxy station, as though it were the real one
+  if train.state == defines.train_state.wait_station and train.station ~= nil and train.station.name == 'ltn-proxy-train-stop' then
+    -- Find corresponding actual LTN stop (This needs to be cached)
+    local virtual_stop = nil
+    for _,surface in pairs(game.surfaces) do
+      local stops = surface.find_entities_filtered{name="logistic-train-stop"}
+      for _,stop in pairs(stops) do
+        if stop.backer_name == train.station.backer_name then
+          virtual_stop = stop
+          break
+        end
+      end
+      if virtual_stop then
+        break
+      end
+    end
+    if virtual_stop then
+      game.print("LTN-MSS telling LTN that train "..train.id.." arrived at "..virtual_stop.backer_name)
+      remote.call("logistic-train-network", "train_arrives", train, virtual_stop)
+    end
+  end
+end
+
+
+
+-- Re-register proxy stations on all surfaces
+function FindAllStops()
+  for _,surface in pairs(game.surfaces) do
+    local global_stops = surface.get_train_stops{name={"global-train-stop", "proxy-train-stop"}}
+    for _,stop in pairs(global_stops) do
+      AddStop(stop)
+    end
+  end
+end
+
+
+local function initGlobals()
+  global.GlobalStopGroups = global.GlobalStopGroups or {}  -- Index by stop name
+  global.GlobalTrainStops = global.GlobalTrainStops or {}  -- Index by unit ID
+  global.ProxyTrainStops = global.ProxyTrainStops or {}    -- Index by unit ID
+  
+  FindAllStops()
+
+end
+
+-- register events
+local function registerEvents()
+ 
+  -- always track built/removed train stops for duplicate name list
+  entity_filters = {
+    {type="name", name="global-train-stop"},
+    {type="name", name="proxy-train-stop"}
+  }
+  script.on_event( defines.events.on_built_entity, OnEntityCreated, entity_filters )
+  script.on_event( defines.events.on_robot_built_entity, OnEntityCreated, entity_filters )
+  script.on_event( defines.events.on_entity_cloned, OnEntityCreated, entity_filters )
+  script.on_event( defines.events.script_raised_built, OnEntityCreated, entity_filters )
+  script.on_event( defines.events.script_raised_revive, OnEntityCreated, entity_filters )
+
+  script.on_event( defines.events.on_pre_player_mined_item, OnEntityRemoved, entity_filters )
+  script.on_event( defines.events.on_robot_pre_mined, OnEntityRemoved, entity_filters )
+  script.on_event( defines.events.on_entity_died, OnEntityRemoved, entity_filters )
+  script.on_event( defines.events.script_raised_destroy, OnEntityRemoved, entity_filters )
+  
+  script.on_event(defines.events.on_entity_renamed, OnEntityRenamed )
+  script.on_event( {defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, OnSurfaceRemoved )
+  
+  
+  --script.on_event( defines.events.on_train_schedule_changed, OnScheduleChanged )
+  script.on_event( defines.events.on_train_changed_state, OnTrainChangedState )
+  
+end
+
+
+script.on_load(function()
+  registerEvents()
+end)
+
+
+script.on_init(function()
+  initGlobals()
+  registerEvents()
+end)
+
+script.on_configuration_changed(function()
+  initGlobals()
+  registerEvents()
+end)
+  
