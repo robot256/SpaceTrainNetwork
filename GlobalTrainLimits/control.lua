@@ -17,9 +17,16 @@
 
 util = require("util")
 
+NAME_GLOBAL_STOP = "global-train-stop"
+NAME_PROXY_STOP = "proxy-train-stop"
+NAME_ELEVATOR_STOP = "se-space-elevator-train-stop"
+NAME_ELEVATOR_ENTITY = "se-space-elevator"
 
--- Crude search for matching a planet/moon surface with its orbit.  Assume that if Proxy Stop is placed, there is an elevator to use.
-local function FindAdjacentSurfaces(surface)
+
+
+
+-- Crude search for matching a planet/moon surface with its orbit.
+local function FindAdjacentSurface(surface)
   local results = {}
   
   local current_zone = remote.call("space-exploration", "get_zone_from_surface_index", {surface_index=surface.index})
@@ -38,8 +45,6 @@ local function FindAdjacentSurfaces(surface)
       planet_zone = parent_zone
       orbit_zone = current_zone
     end
-  else
-    other_zone = current_zone
   end
   
   if planet_zone then
@@ -48,36 +53,32 @@ local function FindAdjacentSurfaces(surface)
   if orbit_zone then
     results.orbit = remote.call("space-exploration", "zone_get_surface", {zone_index = orbit_zone.index})
   end
-  if other_zone then
-    results.other = surface
-  end
   
   return results
 end
 
-local function FindHostStop(proxy_stop)
 
-  local surface = proxy_stop.surface
-  local nearby_surfaces = FindAdjacentSurfaces(surface)
+local function InitStopGroup(name)
+  global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}, trains={}}
+end
+
+
+local function initGlobals()
+
   
-  -- Find corresponding actual LTN stop (This needs to be cached)
-  local matching_stops = {}
-  for _,surface in pairs(nearby_surfaces) do
-    local stops = surface.find_entities_filtered{name="logistic-train-stop"}
-    for _,stop in pairs(stops) do
-      if stop.backer_name == proxy_stop.backer_name then
-        table.insert(matching_stops,stop)
-      end
-    end
-  end
+  FindAllStops()
 
 end
+
+
+
+
 
 -- Register a Global or Proxy stop in the database
 local function RegisterStop(entity)
   local name = entity.backer_name
   
-  if entity.name == "global-train-stop" then
+  if entity.name == NAME_GLOBAL_STOP then
     if not global.GlobalStops[entity.unit_number] then
       game.print("Adding Global stop to list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
       global.GlobalStops[entity.unit_number] = {
@@ -85,13 +86,13 @@ local function RegisterStop(entity)
         unit_number = entity.unit_number,
         group = name
       }
-      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}, trains={}}
+      InitStopGroup(name)
       global.StopGroups[name].global_stops[entity.unit_number] = {
         entity = entity,
         unit_number = entity.unit_number
       }
     end
-  elseif entity.name == "proxy-train-stop" then
+  elseif entity.name == NAME_PROXY_STOP then
     if not global.ProxyStops[entity.unit_number] then
       game.print("Adding Proxy stop to list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
       global.ProxyStops[entity.unit_number] = {
@@ -99,7 +100,7 @@ local function RegisterStop(entity)
         unit_number = entity.unit_number,
         group = name
       }
-      global.StopGroups[name] = global.StopGroups[name] or {global_stops={}, proxy_stops={}, trains={}}
+      InitStopGroup(name)
       global.StopGroups[name].proxy_stops[entity.unit_number] = {
         entity = entity,
         unit_number = entity.unit_number
@@ -109,13 +110,13 @@ local function RegisterStop(entity)
 end
 
 local function UnregisterStop(name, entity)
-  if entity.name == "global-train-stop" then
+  if entity.name == NAME_GLOBAL_STOP then
     game.print("Removing Global stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
     if global.StopGroups[name] then
       global.StopGroups[name].global_stops[entity.unit_number] = nil
     end
     global.GlobalStops[entity.unit_number] = nil
-  elseif entity.name == "proxy-train-stop" then
+  elseif entity.name == NAME_PROXY_STOP then
     game.print("Removing Proxy stop from list: "..name.." ("..entity.unit_number..") on "..entity.surface.name)
     if global.StopGroups[name] then
       global.StopGroups[name].proxy_stops[entity.unit_number] = nil
@@ -138,7 +139,7 @@ end
 function OnSurfaceRemoved(event)
   local surface = game.surfaces[event.surface_index]
   if surface then
-    local train_stops = surface.get_train_stops{name = {"global-train-stop", "proxy-train-stop"}}
+    local train_stops = surface.get_train_stops{name = {NAME_GLOBAL_STOP, NAME_PROXY_STOP}}
     for _, entity in pairs(train_stops) do
       UnregisterStop(entity.backer_name, entity)
     end
@@ -148,7 +149,7 @@ end
 -- Reassign group when station is renamed
 function OnEntityRenamed(event)
   local entity = event.entity
-  if entity.name == "global-train-stop" then
+  if entity.name == NAME_GLOBAL_STOP then
     local oldName = event.old_name
     local newName = entity.backer_name
     local unit_number = entity.unit_number
@@ -158,13 +159,13 @@ function OnEntityRenamed(event)
         global.StopGroups[oldName] = nil
       end
     end
-    global.StopGroups[newName] = global.StopGroups[newName] or {global_stops={}, proxy_stops={}, trains={}}
+    InitStopGroup(newName)
     global.StopGroups[newName].global_stops[unit_number] = {
       entity = entity,
       unit_number = unit_number
     }
     global.GlobalStops[unit_number].group = newName
-  elseif entity.name == "proxy-train-stop" then
+  elseif entity.name == NAME_PROXY_STOP then
     local oldName = event.old_name
     local newName = entity.backer_name
     local unit_number = entity.unit_number
@@ -174,7 +175,7 @@ function OnEntityRenamed(event)
         global.StopGroups[oldName] = nil
       end
     end
-    global.StopGroups[newName] = global.StopGroups[newName] or {global_stops={}, proxy_stops={}, trains={}}
+    InitStopGroup(newName)
     global.StopGroups[newName].global_stops[unit_number] = {
       entity = entity,
       unit_number = unit_number
@@ -324,6 +325,7 @@ local function ProcessTrainSchedule(train, cargo)
   end
 end
 
+
 --[[
 function OnScheduleChanged(event)
   -- don't mess with manual schedule changes
@@ -339,10 +341,10 @@ end
 
 
 
+-- Adjust train schedules so they go through the elevator!
 function OnTrainChangedState(event)
   local train = event.train
   
-  -- Tell LTN when we arrive at a proxy station, as though it were the real one
   if train.state == defines.train_state.wait_station and train.station ~= nil and train.station.name == 'ltn-proxy-train-stop' then
     -- Find corresponding actual LTN stop (This needs to be cached)
     local virtual_stop = nil
@@ -370,7 +372,7 @@ end
 -- Re-register proxy stations on all surfaces
 function FindAllStops()
   for _,surface in pairs(game.surfaces) do
-    local global_stops = surface.get_train_stops{name={"global-train-stop", "proxy-train-stop"}}
+    local global_stops = surface.get_train_stops{name={NAME_GLOBAL_STOP, NAME_PROXY_STOP}}
     for _,stop in pairs(global_stops) do
       RegisterStop(stop)
     end
@@ -378,22 +380,15 @@ function FindAllStops()
 end
 
 
-local function initGlobals()
-  global.GlobalStopGroups = global.GlobalStopGroups or {}  -- Index by stop name
-  global.GlobalStops = global.GlobalStops or {}  -- Index by unit ID
-  global.ProxyStops = global.ProxyStops or {}    -- Index by unit ID
-  
-  FindAllStops()
 
-end
 
 -- register events
 local function registerEvents()
  
   -- always track built/removed train stops for duplicate name list
   entity_filters = {
-    {type="name", name="global-train-stop"},
-    {type="name", name="proxy-train-stop"}
+    {type="name", name=NAME_GLOBAL_STOP},
+    {type="name", name=NAME_PROXY_STOP}
   }
   script.on_event( defines.events.on_built_entity, OnEntityCreated, entity_filters )
   script.on_event( defines.events.on_robot_built_entity, OnEntityCreated, entity_filters )
