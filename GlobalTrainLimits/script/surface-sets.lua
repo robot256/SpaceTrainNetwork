@@ -10,7 +10,7 @@
 
 
 -- add_link: Registers two surfaces
-local function add_link(origin, destination, link_schedule, link_cost)
+local function add_link(origin, destination, link_schedule, link_cost, update)
   local origin_set = global.surface_sets[origin.index]
   local destination_set = global.surface_sets[destination.index]
   local link_entry = {schedule = link_schedule, cost = link_cost}
@@ -28,8 +28,8 @@ local function add_link(origin, destination, link_schedule, link_cost)
         -- add new link
         origin_set.origins[origin.index][destination.index] = link_entry
       else
-        -- already in the same set. Add link stop if this link is empty
-        if not origin_set.origins[origin.index][destination.index] then
+        -- already in the same set. Add link stop if this link is empty or if this is an update to an existing link
+        if update or not origin_set.origins[origin.index][destination.index] then
           origin_set.origins[origin.index][destination.index] = link_entry
         end
       end
@@ -49,11 +49,9 @@ local function add_link(origin, destination, link_schedule, link_cost)
       local new_set = {
         origins = {
           [origin.index] = {
-            [destination.index] = link_entry
+            [destination.index] = link_entry  -- There is a path from origin to destination
           },
-          [destination.index] = {
-            [origin.name] = {}
-          },
+          [destination.index] = {},  -- Destination is in the set, but there are no paths from it yet
         },
         groups = {}
       }
@@ -64,10 +62,34 @@ local function add_link(origin, destination, link_schedule, link_cost)
 
 end
 
-local function update_link(link_stop, destination_surface)
-
+-- remove_link: Deregister a link and split surface set if needed
+local function remove_link(origin, destination)
+  local origin_set = global.surface_sets[origin.index]
+  if not origin_set[origin.index][destination.index] then
+    return
+  end
+  
+  -- Remove the link
+  origin_set[origin.index][destination.index] = nil
+  
+  -- Now figure out if this surface pair is still connected
+  if origin_set[destination.index][origin.index] then
+    return
+  end
+  
+  -- There is no link in either direction now. Figure out of there are disjointed sets now
+  -- make a new set for the destination and its connections, to use if 
+  local destination_set = {
+    origins = {
+      [destination.index] = {}
+    },
+    groups = {}
+  }
+  
+  -- TODO: Figure out how to do an efficient graph search
+  
+  -- TODO: If they are disjoint, change the set assignment in global.surface_sets for anything not connected to origin
 
 end
 
-local function remove_link(link_stop)
 
