@@ -28,9 +28,12 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
         -- add new link
         origin_set.origins[origin.index][destination.index] = link_entry
       else
-        -- already in the same set. Add link stop if this link is empty or if this is an update to an existing link
+        -- already in the same set. Add link stop if this link is empty or if this is an update to an existing link and is cheaper
         if update or not origin_set.origins[origin.index][destination.index] then
-          origin_set.origins[origin.index][destination.index] = link_entry
+          if not link_cost or
+                (origin_set.origins[origin.index][destination.index].cost and link_cost < origin_set.origins[origin.index][destination.index].cost) then
+            origin_set.origins[origin.index][destination.index] = link_entry
+          end
         end
       end
     else
@@ -89,7 +92,9 @@ local function remove_link(origin, destination)
   -- TODO: Figure out how to do an efficient graph search
   
   -- TODO: If they are disjoint, change the set assignment in global.surface_sets for anything not connected to origin
+  -- TODO: Delete sets if there is only one surface in it.
 
 end
 
 
+return {add_link = add_link, remove_link = remove_link}
