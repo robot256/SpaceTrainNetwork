@@ -30,8 +30,10 @@ surface_graph = require("script/surface-graph")
 local function OnEntityRenamed(event)
   local entity = event.entity
   local surface = entity.surface
-  
-  if entity.name == NAME_ELEVATOR_STOP then
+  if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
+    -- Reassign stop groups
+    surface_graph.rename_stop(entity, event.old_name)
+  elseif entity.name == NAME_ELEVATOR_STOP then
     -- Elevator stops get renamed when they are created or when the user renames the elevator entity
     local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
     if elevator_surfaces.adjacent then

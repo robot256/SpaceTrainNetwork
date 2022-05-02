@@ -1,14 +1,19 @@
 
 -- Create an empty stop group
-local function create_group(set)
+local function create_group()
   return {
     global_stops = {},
     proxy_stops = {},
     any_limited = false,
     all_limited = false,
     trains_pathing = {},
-    surface_set = set,
   }
+end
+
+
+-- Count the number of stops in this group
+local function size(group)
+  return table_size(group.global_stops) + table_size(group.proxy_stops)
 end
 
 -- Add the given proxy or global stop to the given group.
@@ -27,7 +32,7 @@ local function add_stop(group, entity)
   end
 end
 
--- Remove the given proxy or global stop from the given group.
+-- Remove the given proxy or global stop from the given group, based on the stop's unit_number.
 local function remove_stop(group, entity)
   local unit_number = entity.unit_number
   if entity.name == NAME_GLOBAL_STOP then
@@ -119,6 +124,7 @@ end
 
 return {
   create_group = create_group,
+  size = size,
   add_stop = add_stop,
   remove_stop = remove_stop,
   update_limits = update_limits,

@@ -3,18 +3,28 @@
 
 local stop_group = require("script/stop-group")
 
-
+-- create_set: Make a new set with just one surface in it
+local function get_or_create_set(surface)
+  -- Make sure this surface is not already in a set
+  if not global.surface_set_map[surface.index] then
+    -- make a new set for just this surface
+    local new_set = {
+      origins = {
+        [surface.index] = {},
+      },
+      groups = {}
+    }
+    table.insert(global.surface_set_list, new_set)
+    global.surface_set_map[surface.index] = new_set
+  end
+  return global.surface_set_map[surface.index]
+end
 
 -- add_train_stop: When a Global or Proxy Stop is created, find the appropriate surface group to put it in
 local function add_stop(entity)
   local name = entity.backer_name
   local surface = entity.surface
-  local set = global.surface_set_map[surface.index]
-  
-  -- Check if this surface is in a group
-  if not set then
-    return
-  end
+  local set = get_or_create_set(surface)
   
   -- Check if this surface set has a group with this name already
   if set.groups[name] then
@@ -22,7 +32,7 @@ local function add_stop(entity)
     stop_group.add_stop(set.groups[name], entity)
   else
     -- Make a new group
-    set.groups[name] = stop_group.create_group(set)
+    set.groups[name] = stop_group.create_group()
     stop_group.add_stop(set.groups[name], entity)
   end
 end
@@ -37,7 +47,6 @@ end
 
 -- Remove a stop from whatever set group it is in
 local function remove_stop(entity)
-  local name = entity.backer_name
   local surface = entity.surface
   local set = global.surface_set_map[surface.index]
 
@@ -47,6 +56,9 @@ local function remove_stop(entity)
   
   if set.groups[name] then
     stop_group.remove_stop(set.groups[name], entity)
+    if stop_group.size(set.groups[name]) == 0 then
+      set.groups[name] = nil
+    end
   end
 end
 
@@ -57,6 +69,24 @@ local function remove_all_stops(surface)
     remove_stop(stops[i])
   end
 end
+
+-- Rename a stop (move it to a different group)
+local function rename_stop(entity, old_name)
+  local name = entity.backer_name
+  local surface = entity.surface
+  local set = get_or_create_set(surface)
+  
+  -- Remove this stop (by unit_number) from the old group
+  if set.groups[old_name] then
+    stop_group.remove_stop(set.groups[old_name], entity)
+    if stop_group.size(set.groups[old_name]) == 0 then
+      set.groups[old_name] = nil
+    end
+  end
+  -- Add this stop to the new group
+  stop_group.add_stop(set.groups[name], entity)
+end
+
 
 -- Update the limits on a specific set of surfaces
 local function update_set_limits(set)
@@ -186,5 +216,6 @@ return {
   add_all_stops = add_all_stops,
   remove_stop = remove_stop,
   remove_all_stops = remove_all_stops,
+  rename_stop = rename_stop,
   update_all_limits = update_all_limits,
 }
