@@ -172,14 +172,4 @@ end
 
 
 
--- Re-register proxy stations on all surfaces
-function FindAllStops()
-  for _,surface in pairs(game.surfaces) do
-    local global_stops = surface.get_train_stops{name={NAME_GLOBAL_STOP, NAME_PROXY_STOP}}
-    for _,stop in pairs(global_stops) do
-      RegisterStop(stop)
-    end
-  end
-end
-
 

@@ -15,19 +15,19 @@
 
 -- Maintain a list of ltn-proxy-train-stop entities, and their corresponding logistic-train-stop entities, if any
 
-util = require("util")
-zone_util = require("zone-util.lua")
-surface_graph = require("surface-graph.lua")
-
 NAME_GLOBAL_STOP = "global-train-stop"
 NAME_PROXY_STOP = "proxy-train-stop"
 NAME_ELEVATOR_STOP = "se-space-elevator-train-stop"
 NAME_ELEVATOR_ENTITY = "se-space-elevator"
 
 
+util = require("util")
+zone_util = require("script/zone-util")
+surface_graph = require("script/surface-graph")
+
 
 -- Reassign group when station is renamed
-function OnEntityRenamed(event)
+local function OnEntityRenamed(event)
   local entity = event.entity
   local surface = entity.surface
   
@@ -41,15 +41,41 @@ function OnEntityRenamed(event)
   end
 end
 
+-- Add global and proxy stops to a surface set if there is one
+local function OnEntityCreated(event)
+  local entity = event.created_entity or event.entity or event.destination
+  
+  if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
+    surface_graph.add_stop(entity)
+  end
+end
 
+-- Remove global and proxy stops from a surface set if there is one
+local function OnEntityRemoved(event)
+  local entity = event.entity
+  if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
+    surface_graph.remove_stop(entity)
+  end
+end
+
+
+-- Tick handler to update the train limits
+local function OnTick(event)
+  surface_graph.update_all_limits()
+end
+
+
+local function init_globals()
+  surface_graph.init_globals()
+end
 
 -- register events
-local function registerEvents()
+local function register_events()
  
   -- always track built/removed train stops for duplicate name list
   entity_filters = {
-    {type="name", name=NAME_GLOBAL_STOP},
-    {type="name", name=NAME_PROXY_STOP},
+    {filter="name", name=NAME_GLOBAL_STOP},
+    {filter="name", name=NAME_PROXY_STOP},
   }
   script.on_event( defines.events.on_built_entity, OnEntityCreated, entity_filters )
   script.on_event( defines.events.on_robot_built_entity, OnEntityCreated, entity_filters )
@@ -69,22 +95,24 @@ local function registerEvents()
   --script.on_event( defines.events.on_train_schedule_changed, OnScheduleChanged )
   script.on_event( defines.events.on_train_changed_state, OnTrainChangedState )
   
+  script.on_event( defines.events.on_tick, OnTick )
+  
 end
 
 
 script.on_load(function()
-  registerEvents()
+  register_events()
 end)
 
 
 script.on_init(function()
-  initGlobals()
-  registerEvents()
+  init_globals()
+  register_events()
 end)
 
 script.on_configuration_changed(function()
-  initGlobals()
-  registerEvents()
+  init_globals()
+  register_events()
 end)
 
 
