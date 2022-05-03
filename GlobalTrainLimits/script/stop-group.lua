@@ -2,11 +2,11 @@
 -- Create an empty stop group
 local function create_group()
   return {
-    global_stops = {},
-    proxy_stops = {},
+    global_stops = {},  -- index by unit_number
+    proxy_stops = {},   -- index by unit_number
     any_limited = false,
     all_limited = false,
-    trains_pathing = {},
+    trains = {}, -- index by train_id, link to reserved global stop unit_number
   }
 end
 
@@ -38,7 +38,7 @@ local function remove_stop(group, entity)
   if entity.name == NAME_GLOBAL_STOP then
     if group.global_stops[unit_number] then
       -- Forget trains currently pathing to this station
-      for id,train in group.global_stops[unit_number].trains do
+      for id,train in pairs(group.global_stops[unit_number].trains) do
         group.trains[id] = nil
       end
       group.global_stops[unit_number] = nil
@@ -47,6 +47,7 @@ local function remove_stop(group, entity)
     group.proxy_stops[unit_number] = nil
   end
 end
+
 
 -- Update the train limits on all the stops in the group
 -- Global Train Limit signal: 
@@ -58,6 +59,7 @@ local function update_limits(group)
   group.any_limited = false
   group.all_limited = true
   local total_open_slots = 0
+  local open_slots_per_surface = {}
   -- Step 1: Get the user train limit signal from every flobal stop, and the inbound train
   --         And disable the "set train limit" control behavior
   for id,stop in pairs(group.global_stops) do
@@ -80,7 +82,9 @@ local function update_limits(group)
       local new_limit = math.max(stop.limit - hidden_trains_count, real_trains_count)
       stop.entity.trains_limit = math.max(new_limit, 0)  -- must not provide a negative number
       -- Calculate how many slots to give to proxy stops (counting both en route and reserved trains)
-      total_open_slots = total_open_slots + math.max(stop.limit - real_trains_count - hidden_trains_count, 0)
+      local open_slots_this_stop = math.max(stop.limit - real_trains_count - hidden_trains_count, 0)
+      total_open_slots = total_open_slots + open_slots_this_stop
+      open_slots_per_surface[stop.entity.surface.index] = (open_slots_per_surface[stop.entity.surface.index] or 0) + open_slots_this_stop
     else
       -- Not connected to circuit network, no limit
       stop.limit = nil
@@ -94,7 +98,7 @@ local function update_limits(group)
   for id,stop in pairs(group.proxy_stops) do
     if stop.entity.get_circuit_network(defines.wire_type.green) or 
        stop.entity.get_circuit_network(defines.wire_type.red) then
-      -- Disable setting train limit through vanilla circuit
+      -- Disable setting train limit through vanilla circuit (there really shouldn't be any circuits attached to proxy stops, but still)
       local cb = stop.entity.get_control_behavior()
       if cb then
         cb.set_trains_limit = false
@@ -103,7 +107,16 @@ local function update_limits(group)
     end
     -- Set train limit if there are a finite slots in all the global stops
     if group.all_limited then
-      stop.entity.trains_limit = total_open_slots
+      local open_slots_off_surface = 0
+      if total_open_slots > 0 then
+        local this_surface_index = stop.entity.surface.index
+        for surface_index,count in pairs(open_slots_per_surface) do
+          if surface_index ~= this_surface_index then
+            open_slots_off_surface = open_slots_off_surface + count
+          end
+        end
+      end
+      stop.entity.trains_limit = open_slots_off_surface
     else
       stop.entity.trains_limit = nil
     end

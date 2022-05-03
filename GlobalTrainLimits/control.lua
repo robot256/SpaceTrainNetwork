@@ -56,6 +56,7 @@ end
 local function OnEntityRemoved(event)
   local entity = event.entity
   if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
+    log("> Removing stop "..tostring(entity.unit_number).." '"..entity.backer_name.."' on "..entity.surface.name)
     surface_graph.remove_stop(entity)
   end
 end

@@ -47,18 +47,24 @@ end
 
 -- Remove a stop from whatever set group it is in
 local function remove_stop(entity)
+  local name = entity.backer_name
   local surface = entity.surface
   local set = global.surface_set_map[surface.index]
 
   if not set then
+    log(">> Could not find surface_set for "..surface.name..", entity not removed.")
     return
   end
   
   if set.groups[name] then
+    log(">> Removing stop from group '"..name.."' on "..surface.name)
     stop_group.remove_stop(set.groups[name], entity)
     if stop_group.size(set.groups[name]) == 0 then
       set.groups[name] = nil
+      log(">> Group '"..name.."' is empty, removing from "..surface.name)
     end
+  else
+    log(">> Could not find stop group for '"..name.."' on "..surface.name..", entity not removed.")
   end
 end
 
@@ -121,13 +127,30 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
       if origin_set ~= destination_set then
         -- merge two non-overlapping sets
         -- merge link tables
-        for origin_index,origin_table in destination_set.origins do
-          origin_set.origins[origin_index] = origin_table
-          global.surface_set_map[origin_index] = origin_set
+        for added_origin_index,added_origin_table in pairs(destination_set.origins) do
+          origin_set.origins[added_origin_index] = added_origin_table
+          global.surface_set_map[added_origin_index] = origin_set
         end
         -- add new link
         origin_set.origins[origin.index][destination.index] = link_entry
-        -- TODO: merge stop groups from destination into origin
+        
+        for name,group in pairs(destination_set.groups) do
+          if origin_set.groups[name] then
+            -- merge into existing group
+            for unit_number,global_stop_entry in pairs(group.global_stops) do
+              origin_set.groups[name].global_stops[unit_number] = global_stop_entry
+            end
+            for unit_number,proxy_stop_entry in pairs(group.proxy_stops) do
+              origin_set.groups[name].proxy_stops[unit_number] = proxy_stop_entry
+            end
+            for train_id,train_entry in pairs(group.trains_pathing) do
+              origin_set.groups[name].trains[train_id] = train_entry
+            end
+          else
+            -- name not present in origin set, add it directly
+            origin_set.groups[name] = group
+          end
+        end
         
         update_set_limits(origin_set)
       else
@@ -203,8 +226,7 @@ local function remove_link(origin, destination)
   -- TODO: Figure out how to do an efficient graph search
   
   -- TODO: If they are disjoint, change the set assignment in global.surface_set_map for anything not connected to origin
-  -- TODO: Delete sets if there is only one surface in it.
-
+  
 end
 
 
