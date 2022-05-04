@@ -72,6 +72,7 @@ end
 
 -- Watch for when trains are stuck waiting for a destination
 local function OnTrainChangedState(event)
+  --game.print(tostring(game.tick)..": Received on_train_changed_state event. train="..tostring(event.train)..", state="..tostring(event.train.state))
   local train = event.train
   if train.state == defines.train_state.destination_full then
     surface_graph.add_waiting_train(train)

@@ -20,7 +20,7 @@ local function get_or_create_set(surface)
   return global.surface_set_map[surface.index]
 end
 
--- add_train_stop: When a Global or Proxy Stop is created, find the appropriate surface group to put it in
+-- add_waiting_train_stop: When a Global or Proxy Stop is created, find the appropriate surface group to put it in
 local function add_stop(entity)
   local name = entity.backer_name
   local surface = entity.surface
@@ -126,7 +126,7 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
     if destination_set then
       -- both are already in a set
       if origin_set ~= destination_set then
-        -- merge two non-overlapping sets
+        -- Merge two non-overlapping sets
         -- merge link tables
         for added_origin_index,added_origin_table in pairs(destination_set.origins) do
           origin_set.origins[added_origin_index] = added_origin_table
@@ -138,15 +138,7 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
         for name,group in pairs(destination_set.groups) do
           if origin_set.groups[name] then
             -- merge into existing group
-            for unit_number,global_stop_entry in pairs(group.global_stops) do
-              origin_set.groups[name].global_stops[unit_number] = global_stop_entry
-            end
-            for unit_number,proxy_stop_entry in pairs(group.proxy_stops) do
-              origin_set.groups[name].proxy_stops[unit_number] = proxy_stop_entry
-            end
-            for train_id,train_entry in pairs(group.trains_pathing) do
-              origin_set.groups[name].trains[train_id] = train_entry
-            end
+            stop_group.merge_groups(origin_set.groups[name], group)
           else
             -- name not present in origin set, add it directly
             origin_set.groups[name] = group
@@ -155,7 +147,7 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
         
         update_set_limits(origin_set)
       else
-        -- already in the same set. Add link stop if this link is empty or if this is an update to an existing link and is cheaper
+        -- Already in the same set. Add link stop if this link is empty or if this is an update to an existing link and is cheaper
         if update or not origin_set.origins[origin.index][destination.index] then
           if not origin_set.origins[origin.index][destination.index] or not link_cost or
                 (origin_set.origins[origin.index][destination.index].cost and link_cost <= origin_set.origins[origin.index][destination.index].cost) then
@@ -243,7 +235,7 @@ local function add_waiting_train(train)
     local station = schedule.records[schedule.current].station
     local group = set.groups[station]
     if group then
-      stop_group.add_train(group, train)
+      stop_group.add_waiting_train(group, train)
     end
   end
 end
@@ -298,29 +290,39 @@ local function train_teleported(event)
     local schedule = train.schedule
     local station = schedule.records[schedule.current].station
     local group = set.groups[station]
-    if group then
+    if group and group.trains_pathing[train.id] then
       stop_group.schedule_temp_stop(group, train)
     end
   end
 end
 
 
--- When a train arrives at a temporary stop
+-- When a train arrives at a station
 local function train_state_changed(event)
   game.print("Handling train_state_changed event")
   local train = event.train
   if train.state == defines.train_state.wait_station then
     game.print("Train "..tostring(train.id).." is now wait_station")
     local schedule = train.schedule
-    game.print(serpent.line(schedule))
-    if schedule.records[schedule.current].temporary then
-      local surface = train.carriages[1].surface
-      local set = global.surface_set_map[surface.index]
-      game.print("Just stopped at a temporary stop")
-      if set then
+    local surface = train.carriages[1].surface
+    local set = global.surface_set_map[surface.index]
+    if set then
+      -- Temporary stop that is not the end of the schedule
+      if schedule.records[schedule.current].temporary and #schedule.records > schedule.current then
+        game.print("Just stopped at a temporary stop")
         local station = schedule.records[schedule.current+1].station
         local group = set.groups[station]
-        if group then
+        if group and group.trains_pathing[train.id] then
+          -- Next stop is a global stop, need to reserve it so the train will arrive at it next tick
+          stop_group.reserve_stop(group, train)
+        end
+      
+      -- Arriving at a real stop
+      elseif schedule.records[schedule.current].station then
+        game.print("Just stopped at a station")
+        local group = set.groups[schedule.records[schedule.current].station]
+        if group and group.trains_arriving[train.id] then
+          -- Arrived at a global stop. Remove train from watch lists
           stop_group.complete_trip(group, train)
         end
       end
