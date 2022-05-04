@@ -77,6 +77,7 @@ local function OnTrainChangedState(event)
     surface_graph.add_waiting_train(train)
   elseif train.state == defines.train_state.wait_station then
     -- if a train that was in transit is now waiting at a station, then we should remove it from the in-transit list
+    surface_graph.train_state_changed(event)
   end
 end
 

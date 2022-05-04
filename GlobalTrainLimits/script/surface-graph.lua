@@ -299,7 +299,31 @@ local function train_teleported(event)
     local station = schedule.records[schedule.current].station
     local group = set.groups[station]
     if group then
-      stop_group.route_train_to_stop(group, train)
+      stop_group.schedule_temp_stop(group, train)
+    end
+  end
+end
+
+
+-- When a train arrives at a temporary stop
+local function train_state_changed(event)
+  game.print("Handling train_state_changed event")
+  local train = event.train
+  if train.state == defines.train_state.wait_station then
+    game.print("Train "..tostring(train.id).." is now wait_station")
+    local schedule = train.schedule
+    game.print(serpent.line(schedule))
+    if schedule.records[schedule.current].temporary then
+      local surface = train.carriages[1].surface
+      local set = global.surface_set_map[surface.index]
+      game.print("Just stopped at a temporary stop")
+      if set then
+        local station = schedule.records[schedule.current+1].station
+        local group = set.groups[station]
+        if group then
+          stop_group.complete_trip(group, train)
+        end
+      end
     end
   end
 end
@@ -319,4 +343,5 @@ return {
   add_waiting_train = add_waiting_train,
   train_created = train_created,
   train_teleported = train_teleported,
+  train_state_changed = train_state_changed,
 }

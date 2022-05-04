@@ -164,12 +164,10 @@ local function update_trains(group)
         group.trains_waiting[id] = nil
         group.trains_pathing[id] = {train=train, stop_id=best_stop_index}
         group.global_stops[best_stop_index].trains[id] = train
+        update_limits(group)
       end
     end
   end
-  
-  -- Update trains pathing to destination?
-  -- Need to give them a temporary endpoint schedule at some point
   
 end
 
@@ -191,7 +189,7 @@ local function update_train_id(group, train, old_train_id)
 end
 
 -- Send this train to the correct stop with a temporary stop
-local function route_train_to_stop(group, train)
+local function schedule_temp_stop(group, train)
   local entity = group.global_stops[group.trains_pathing[train.id].stop_id].entity
   local rail = entity.connected_rail
   local direction = entity.connected_rail_direction
@@ -200,11 +198,23 @@ local function route_train_to_stop(group, train)
   
   local schedule = train.schedule
   table.insert(schedule.records, schedule.current, record)
+  
   game.print("Setting train "..tostring(train.id).." schedule to "..serpent.line(schedule))
   train.schedule = schedule
 end
 
 
+-- The train has arrived at the temporary stop
+local function complete_trip(group, train)
+  local stop_id = group.trains_pathing[train.id].stop_id
+  local schedule = train.schedule
+  local station = schedule.records[schedule.current+1].station
+  -- Remove this train from the pathing_trains lists
+  group.global_stops[stop_id].trains[train.id] = nil
+  group.trains_pathing[train.id] = nil
+  update_limits(group)
+  game.print("Opened slot for Train "..tostring(train.id).." about to go to station "..station)
+end
 
 
 return {
@@ -216,6 +226,7 @@ return {
   add_train = add_train,
   update_trains = update_trains,
   update_train_id = update_train_id,
-  route_train_to_stop = route_train_to_stop,
+  schedule_temp_stop = schedule_temp_stop,
+  complete_trip = complete_trip,
   clear_train = clear_train,
 }
