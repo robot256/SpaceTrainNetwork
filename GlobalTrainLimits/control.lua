@@ -19,6 +19,7 @@ NAME_GLOBAL_STOP = "global-train-stop"
 NAME_PROXY_STOP = "proxy-train-stop"
 NAME_ELEVATOR_STOP = "se-space-elevator-train-stop"
 NAME_ELEVATOR_ENTITY = "se-space-elevator"
+NAME_GLOBAL_LIMIT_SIGNAL = "signal-global-train-limit"
 
 
 util = require("util")
@@ -62,11 +63,33 @@ local function OnEntityRemoved(event)
 end
 
 
--- Tick handler to update the train limits
+-- Tick handler to update the train limits and dispatch waiting trains
 local function OnTick(event)
   surface_graph.update_all_limits()
+  surface_graph.update_all_trains()
 end
 
+
+-- Watch for when trains are stuck waiting for a destination
+local function OnTrainChangedState(event)
+  local train = event.train
+  if train.state == defines.train_state.destination_full then
+    surface_graph.add_waiting_train(train)
+  elseif train.state == defines.train_state.wait_station then
+    -- if a train that was in transit is now waiting at a station, then we should remove it from the in-transit list
+  end
+end
+
+-- Watch for when train id changes as carriages are added
+local function OnTrainCreated(event)
+  surface_graph.train_created(event)
+end
+
+-- Watch for when trains are first teleported to another surface
+local function OnTrainTeleported(event)
+  -- Check if this train in is transit to a global stop
+  surface_graph.train_teleported(event)
+end
 
 local function init_globals()
   surface_graph.init_globals()
@@ -75,7 +98,7 @@ end
 -- register events
 local function register_events()
  
-  -- always track built/removed train stops for duplicate name list
+  -- Track Global Stops and Proxy Stops
   entity_filters = {
     {filter="name", name=NAME_GLOBAL_STOP},
     {filter="name", name=NAME_PROXY_STOP},
@@ -92,11 +115,14 @@ local function register_events()
   script.on_event( defines.events.script_raised_destroy, OnEntityRemoved, entity_filters )
   
   script.on_event(defines.events.on_entity_renamed, OnEntityRenamed )
+  
+  -- Track valid surfaces
   script.on_event( {defines.events.on_pre_surface_deleted, defines.events.on_pre_surface_cleared }, OnSurfaceRemoved )
   
-  
-  --script.on_event( defines.events.on_train_schedule_changed, OnScheduleChanged )
+  -- Track train states
   script.on_event( defines.events.on_train_changed_state, OnTrainChangedState )
+  script.on_event( defines.events.on_train_created, OnTrainCreated )
+  script.on_event( remote.call("space-exploration", "get_on_space_elevator_teleported_train_event"), OnTrainTeleported )
   
   script.on_event( defines.events.on_tick, OnTick )
   

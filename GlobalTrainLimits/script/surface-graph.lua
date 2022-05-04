@@ -32,7 +32,7 @@ local function add_stop(entity)
     stop_group.add_stop(set.groups[name], entity)
   else
     -- Make a new group
-    set.groups[name] = stop_group.create_group()
+    set.groups[name] = stop_group.create_group(set)
     stop_group.add_stop(set.groups[name], entity)
   end
 end
@@ -89,8 +89,9 @@ local function rename_stop(entity, old_name)
       set.groups[old_name] = nil
     end
   end
+  -- Make a new group if necessary
   -- Add this stop to the new group
-  stop_group.add_stop(set.groups[name], entity)
+  add_stop(entity)
 end
 
 
@@ -230,6 +231,80 @@ local function remove_link(origin, destination)
 end
 
 
+
+
+
+-- See if this train needs to be added to a group waiting to be dispatched
+local function add_waiting_train(train)
+  local surface = train.carriages[1].surface
+  local set = global.surface_set_map[surface.index]
+  if set then
+    local schedule = train.schedule
+    local station = schedule.records[schedule.current].station
+    local group = set.groups[station]
+    if group then
+      stop_group.add_train(group, train)
+    end
+  end
+end
+
+-- Update trains in this set waiting for dispatch
+local function update_set_trains(set)
+  for name,group in pairs(set.groups) do
+    stop_group.update_trains(group)
+  end
+end
+
+-- Update all the trains waiting for dispatch (performed every several ticks)
+local function update_all_trains()
+  for i=1,#global.surface_set_list do
+    update_set_trains(global.surface_set_list[i])
+  end
+end
+
+-- When a train is created, update train ids in groups
+local function train_created(event)
+  game.print("Handling train_created event")
+  local train = event.train
+  local surface = train.carriages[1].surface
+  local set = global.surface_set_map[surface.index]
+  if set then
+    if event.old_train_id_1 then
+      for name,group in pairs(set.groups) do
+        stop_group.update_train_id(group, train, event.old_train_id_1)
+      end
+    end
+    if event.old_train_id_2 then
+      for name,group in pairs(set.groups) do
+        stop_group.update_train_id(group, train, event.old_train_id_2)
+      end
+    end
+  end
+end
+
+-- When a train is teleported, and is now bound for a global stop, update the schedule
+local function train_teleported(event)
+  game.print("Handling train_teleported event")
+  local train = event.train
+  local id = train.id
+  local surface = train.carriages[1].surface
+  local set = global.surface_set_map[surface.index]
+  if set then
+    -- Aftr teleporting, always update train IDs
+    for name,group in pairs(set.groups) do
+      stop_group.update_train_id(group, train, event.old_train_id_1)
+    end
+    -- Then check if this is the last transit in the trip, and schedule waypoint to destination stop
+    local schedule = train.schedule
+    local station = schedule.records[schedule.current].station
+    local group = set.groups[station]
+    if group then
+      stop_group.route_train_to_stop(group, train)
+    end
+  end
+end
+
+
 return {
   init_globals = init_globals,
   add_link = add_link, 
@@ -240,4 +315,8 @@ return {
   remove_all_stops = remove_all_stops,
   rename_stop = rename_stop,
   update_all_limits = update_all_limits,
+  update_all_trains = update_all_trains,
+  add_waiting_train = add_waiting_train,
+  train_created = train_created,
+  train_teleported = train_teleported,
 }
