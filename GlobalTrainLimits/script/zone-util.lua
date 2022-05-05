@@ -36,7 +36,7 @@ function find_elevator_surfaces(surface)
   elseif current_zone == orbit_zone then
     results.adjacent = results.planet
     results.start_on_surface = false
-    results.path_cost = 1/radius
+    results.path_cost = radius/5
   end
   
   return results

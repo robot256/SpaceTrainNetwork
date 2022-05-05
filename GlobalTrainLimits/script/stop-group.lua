@@ -58,6 +58,10 @@ local function add_stop(group, entity)
     group.proxy_stops[unit_number] = {
       entity = entity
     }
+    -- No wires allowed on Proxy stops
+    entity.disconnect_neighbour()
+    -- Always set Proxy train limit 0, so that trains are held at their current stop until we modify their schedule
+    entity.trains_limit = 0
   end
 end
 
@@ -93,10 +97,6 @@ end
 --   Zero signal or not set = zero limit
 --   Positive signal = nonzero limit (send very large number if no limit is needed on a wired stop)
 local function update_limits(group)
-  --group.any_limited = false
-  --group.all_limited = true
-  --local total_open_slots = 0
-  --local open_slots_per_surface = {}
   -- Step 1: Get the user train limit signal from every flobal stop, and the inbound train
   --         And disable the "set train limit" control behavior
   for id,stop in pairs(group.global_stops) do
@@ -104,7 +104,6 @@ local function update_limits(group)
         stop.entity.get_circuit_network(defines.wire_type.red) ) then
       -- Read the global limit signal (negative values treated as zero)
       stop.limit = math.max(stop.entity.get_merged_signal({type="virtual",name=NAME_GLOBAL_LIMIT_SIGNAL}), 0)
-      --group.any_limited = true
       -- Disable setting train limit through vanilla circuit
       local cb = stop.entity.get_control_behavior()
       if cb then
@@ -115,42 +114,28 @@ local function update_limits(group)
       local pathing_trains_count = (stop.trains_pathing and table_size(stop.trains_pathing) or 0)  -- en route, no reservation
       local arriving_trains_count = (stop.trains_arriving and table_size(stop.trains_arriving) or 0)  -- just arrived, no reservation yet
       local real_trains_count = stop.entity.trains_count   -- have reservation
-      local stopped_trains_count = (stop.entity.get_stopped_train() and 1) or 0
-      -- Subtract slots for trains pathing that don't need a reservation yet. Minimum is real trains pathing, but don't count trains that are already here
-      local new_limit = math.max(stop.limit - pathing_trains_count, real_trains_count - stopped_trains_count)
-      new_limit = math.max(new_limit, 0)
+      local stopped_trains_count = (stop.entity.get_stopped_train() and 1) or 0  -- stopped at station
+      -- Vanilla-pathing trains don't need a slot. They already have a reservation and will arrive even if the limit is zero
+      -- Stopped trains don't need a slot. They are already at the station
+      -- Mod-pathing trains don't need a slot. They haven't tried to make a reservation yet
+      -- Mod-arriving trains DO need a slot, so that they can make a reservation
+      -- After excluding vanilla- and mod-reservations, extra slots can stay open for vanilla reservations
+      local new_limit = math.max(stop.limit - pathing_trains_count - real_trains_count - stopped_trains_count, arriving_trains_count + real_trains_count - stopped_trains_count)
       if new_limit ~= stop.entity.trains_limit then
-        game.print(tostring(game.tick)..": Setting stop "..tostring(id).." limit to "..tostring(math.max(new_limit, 0)))
-        stop.entity.trains_limit = new_limit  -- must not provide a negative number
+        game.print(tostring(game.tick)..": Setting stop "..tostring(id).." limit to "..tostring(new_limit))
+        stop.entity.trains_limit = math.max(new_limit, 0)  -- must not provide a negative number
       end
       -- Calculate whether a slot is available to dispatch another train.
+      -- Vanilla-pathing, stopped, mod-pathing, and mod-arriving trains all count against the additional dispatch quota
       stop.open = math.max(stop.limit - real_trains_count - pathing_trains_count - arriving_trains_count, 0)
     else
       -- Not connected to circuit network, no limit
       stop.limit = nil
       stop.open = nil
-      --group.all_limited = false
       -- Clear the stop train limit
       stop.entity.trains_limit = nil
     end
   end
-  
-  -- Step 2: Ensure that Proxy Stops have control behavior flags cleared
-  for id,stop in pairs(group.proxy_stops) do
-    if (stop.entity.get_circuit_network(defines.wire_type.green) or 
-        stop.entity.get_circuit_network(defines.wire_type.red) ) then
-      -- Disable setting train limit through vanilla circuit (there really shouldn't be any circuits attached to proxy stops, but still)
-      local cb = stop.entity.get_control_behavior()
-      if cb then
-        cb.set_trains_limit = false
-        cb.enable_disable = false
-      end
-    end
-    -- Always set Proxy train limit 0, so that trains are held at their current stop until we modify their schedule
-    -- TODO: When Proxy stops are automatically created and invisible, set the trains_limit=0 at creation and don't change it again
-    stop.entity.trains_limit = 0
-  end
-  
 end
 
 -- Add a train that is waiting for a stop in this group (in Destination Full state)
@@ -170,19 +155,43 @@ local function complete_trip(group, train)
   end
   group.trains_arriving[train.id] = nil
   -- Update limits now that this train has a real reservation
-  game.print("complete updating limits")
+  --game.print("complete updating limits")
   update_limits(group)
-  game.print("Train "..tostring(train.id).." finished arriving at "..train.station.name)
+  game.print(tostring(game.tick)..": Train "..tostring(train.id).." finished arriving at "..train.station.name)
 end
 
 -- Loop through waiting trains and see if we can dispatch them
 local function update_trains(group)
+  
+  -- Update arriving trains (no event is triggered when they switch from "wait at temp stop" to "wait at real stop" on the same tile)
+  for id, train_entry in pairs(group.trains_arriving) do
+    if train_entry.train.state == defines.train_state.wait_station then
+      if train_entry.train.station == group.global_stops[train_entry.stop_id].entity then
+        -- Train has reserved the other stop
+        game.print(tostring(game.tick)..": Update_train completed trip for arriving train "..tostring(id))
+        complete_trip(group, train_entry.train)
+      end
+    else
+      game.print(tostring(game.tick)..": Update_train still waiting for arriving train "..tostring(id))
+    end
+  end
+  
   -- Update waiting trains
   for id,train in pairs(group.trains_waiting) do
     if train.state ~= defines.train_state.destination_full then
       -- Train already dispatched itself somewhere else
       group.trains_waiting[id] = nil
-    else
+    end
+  end
+  
+  -- Look for providers to stations
+  --for id,stop in pairs(group.global_stops) do
+  --  if not stop.open or stop.open > 0 then
+      -- This stop needs a train. Find one on the closest surface
+      
+    
+    
+  for id,train in pairs(group.trains_waiting) do
       -- Check if there is somewhere we can send this train
       local surface = train.carriages[1].surface
       local best_cost = 1e15
@@ -199,7 +208,7 @@ local function update_trains(group)
             best_cost = link.cost
             best_stop = stop
             best_stop_index = unit_number
-            game.print("Found best link from surface "..surface.name.." to surface "..stop.entity.surface.name)
+            game.print(tostring(game.tick)..": Found best link from surface "..surface.name.." to surface "..stop.entity.surface.name)
           end
         end
       end
@@ -212,7 +221,7 @@ local function update_trains(group)
           table.insert(schedule.records, schedule.current+k-1, record)
         end
         -- Set train schedule. Current stop index stays the same, but now it is the temporary elevator stop
-        game.print("Setting train "..tostring(train.id).." schedule to "..serpent.line(schedule))
+        game.print(tostring(game.tick)..": Setting train "..tostring(train.id).." schedule to "..serpent.line(schedule))
         train.schedule = schedule
         group.trains_waiting[id] = nil
         group.trains_pathing[id] = {train=train, stop_id=best_stop_index}
@@ -220,31 +229,21 @@ local function update_trains(group)
         best_stop.trains_pathing[id] = train
         update_limits(group)
       end
-    end
+    
   end
   
-  -- Update arriving trains
-  for id, train_entry in pairs(group.trains_arriving) do
-    if train_entry.train.state == defines.train_state.wait_station then
-      if train_entry.train.station == group.global_stops[train_entry.stop_id].entity then
-        -- Train has reserved the other stop
-        game.print("Update_train completed trip for train "..tostring(id))
-        complete_trip(group, train_entry.train)
-      end
-    end
-  end
 end
 
 
 -- Update train id links if this train is here
 local function update_train_id(group, train, old_train_id)
   if group.trains_waiting[old_train_id] then
-    game.print("Updating waiting train id "..tostring(old_train_id).." to "..tostring(train.id))
+    --game.print("Updating waiting train id "..tostring(old_train_id).." to "..tostring(train.id))
     group.trains_waiting[old_train_id] = nil
     group.trains_waiting[train.id] = train
   end
   if group.trains_pathing and group.trains_pathing[old_train_id] then
-    game.print("Updating pathing train id "..tostring(old_train_id).." to "..tostring(train.id))
+    --game.print("Updating pathing train id "..tostring(old_train_id).." to "..tostring(train.id))
     local stop_index = group.trains_pathing[old_train_id].stop_id
     local stop = group.global_stops[stop_index]
     stop.trains_pathing[train.id] = train
@@ -253,7 +252,7 @@ local function update_train_id(group, train, old_train_id)
     group.trains_pathing[old_train_id] = nil
   end
   if group.trains_arriving and group.trains_arriving[old_train_id] then
-    game.print("Updating arriving train id "..tostring(old_train_id).." to "..tostring(train.id))
+    --game.print("Updating arriving train id "..tostring(old_train_id).." to "..tostring(train.id))
     local stop_index = group.trains_arriving[old_train_id].stop_id
     local stop = group.global_stops[stop_index]
     stop.trains_arriving[train.id] = train
@@ -274,7 +273,7 @@ local function schedule_temp_stop(group, train)
   local schedule = train.schedule
   table.insert(schedule.records, schedule.current, record)
   
-  game.print("Setting train "..tostring(train.id).." schedule to "..serpent.line(schedule))
+  game.print(tostring(game.tick)..": Setting train "..tostring(train.id).." schedule to "..serpent.line(schedule))
   train.schedule = schedule
 end
 
@@ -295,18 +294,14 @@ local function reserve_stop(group, train)
   end
   group.trains_pathing[train.id] = nil
   -- Update the limit so we have a slot but don't send anything there
-  game.print("reserve updating limits")
+  --game.print("reserve updating limits")
   update_limits(group)
   -- Command the train to go there before the temporary stop times out
-  game.print("reserve setting train schedule")
+  --game.print("reserve setting train schedule")
   table.remove(schedule.records, schedule.current)
   train.schedule = schedule
   train.go_to_station(schedule.current)
-  game.print("Opened slot for Train "..tostring(train.id).." and commanded it to station "..station)
-  if train.station then
-    game.print("reserve is completing trip")
-    complete_trip(group, train)
-  end
+  game.print(tostring(game.tick)..": Opened slot for Train "..tostring(train.id).." and commanded it to station "..station)
 end
 
 

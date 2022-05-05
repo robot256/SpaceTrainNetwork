@@ -52,19 +52,19 @@ local function remove_stop(entity)
   local set = global.surface_set_map[surface.index]
 
   if not set then
-    log(">> Could not find surface_set for "..surface.name..", entity not removed.")
+    --log(">> Could not find surface_set for "..surface.name..", entity not removed.")
     return
   end
   
   if set.groups[name] then
-    log(">> Removing stop from group '"..name.."' on "..surface.name)
+    --log(">> Removing stop from group '"..name.."' on "..surface.name)
     stop_group.remove_stop(set.groups[name], entity)
     if stop_group.size(set.groups[name]) == 0 then
       set.groups[name] = nil
-      log(">> Group '"..name.."' is empty, removing from "..surface.name)
+      --log(">> Group '"..name.."' is empty, removing from "..surface.name)
     end
   else
-    log(">> Could not find stop group for '"..name.."' on "..surface.name..", entity not removed.")
+    --log(">> Could not find stop group for '"..name.."' on "..surface.name..", entity not removed.")
   end
 end
 
@@ -147,10 +147,11 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
         
         update_set_limits(origin_set)
       else
-        -- Already in the same set. Add link stop if this link is empty or if this is an update to an existing link and is cheaper
+        -- Already in the same set. Use this link stop if no link in this direction, or if this is cheaper
         if update or not origin_set.origins[origin.index][destination.index] then
           if not origin_set.origins[origin.index][destination.index] or not link_cost or
-                (origin_set.origins[origin.index][destination.index].cost and link_cost <= origin_set.origins[origin.index][destination.index].cost) then
+                (origin_set.origins[origin.index][destination.index].cost and 
+                 link_cost <= origin_set.origins[origin.index][destination.index].cost) then
             origin_set.origins[origin.index][destination.index] = link_entry
           end
         end
@@ -256,7 +257,7 @@ end
 
 -- When a train is created, update train ids in groups
 local function train_created(event)
-  game.print("Handling train_created event")
+  --game.print("Handling train_created event")
   local train = event.train
   local surface = train.carriages[1].surface
   local set = global.surface_set_map[surface.index]
@@ -276,7 +277,7 @@ end
 
 -- When a train is teleported, and is now bound for a global stop, update the schedule
 local function train_teleported(event)
-  game.print("Handling train_teleported event")
+  --game.print("Handling train_teleported event")
   local train = event.train
   local id = train.id
   local surface = train.carriages[1].surface
@@ -299,17 +300,17 @@ end
 
 -- When a train arrives at a station
 local function train_state_changed(event)
-  game.print("Handling train_state_changed event")
+  --game.print("Handling train_state_changed event")
   local train = event.train
   if train.state == defines.train_state.wait_station then
-    game.print("Train "..tostring(train.id).." is now wait_station")
+    --game.print("Train "..tostring(train.id).." is now wait_station")
     local schedule = train.schedule
     local surface = train.carriages[1].surface
     local set = global.surface_set_map[surface.index]
     if set then
       -- Temporary stop that is not the end of the schedule
       if schedule.records[schedule.current].temporary and #schedule.records > schedule.current then
-        game.print("Just stopped at a temporary stop")
+        --game.print("Just stopped at a temporary stop")
         local station = schedule.records[schedule.current+1].station
         local group = set.groups[station]
         if group and group.trains_pathing[train.id] then
@@ -319,7 +320,7 @@ local function train_state_changed(event)
       
       -- Arriving at a real stop
       elseif schedule.records[schedule.current].station then
-        game.print("Just stopped at a station")
+        --game.print("Just stopped at a station")
         local group = set.groups[schedule.records[schedule.current].station]
         if group and group.trains_arriving[train.id] then
           -- Arrived at a global stop. Remove train from watch lists
