@@ -5,19 +5,20 @@ local stop_group = require("script/stop-group")
 
 -- create_set: Make a new set with just one surface in it
 local function get_or_create_set(surface)
+  local index = surface.index
   -- Make sure this surface is not already in a set
-  if not global.surface_set_map[surface.index] then
+  if not global.surface_set_map[index] then
     -- make a new set for just this surface
     local new_set = {
       origins = {
-        [surface.index] = {},
+        [index] = {[index] = {schedule = nil, cost = 0}},
       },
       groups = {}
     }
     table.insert(global.surface_set_list, new_set)
-    global.surface_set_map[surface.index] = new_set
+    global.surface_set_map[index] = new_set
   end
-  return global.surface_set_map[surface.index]
+  return global.surface_set_map[index]
 end
 
 -- add_waiting_train_stop: When a Global or Proxy Stop is created, find the appropriate surface group to put it in
@@ -178,7 +179,9 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
           [origin.index] = {
             [destination.index] = link_entry  -- There is a path from origin to destination
           },
-          [destination.index] = {},  -- Destination is in the set, but there are no paths from it yet
+          [destination.index] = {  -- Destination is in the set, but there are no paths from it yet
+            [destination.index] = {cost=0}
+          },
         },
         groups = {}
       }
