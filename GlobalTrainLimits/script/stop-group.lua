@@ -120,9 +120,10 @@ local function update_limits(group, verbose)
       -- We need to not double-count them
       if real_trains_count > 0 then
         local stop_vanilla_trains = stop.entity.get_train_stop_trains()
-        for id,t in pairs(stop_vanilla_trains) do
-          if stop.trains_arriving and stop.trains_arriving[id] and t.path_end_stop == stop.entity then
-            -- this is a duplicate
+        for i=1,#stop_vanilla_trains do
+          local train = stop_vanilla_trains[i]
+          if stop.trains_arriving and stop.trains_arriving[train.id] and train.path_end_stop == stop.entity then
+            -- this is a duplicate arriving train
             duplicate_trains_count = duplicate_trains_count + 1
           end
         end
@@ -225,6 +226,48 @@ local function schedule_temp_stop(group, train)
 end
 
 
+-- Add a train that is pathing to a global stop, which we might not have dispatched ourselves
+local function add_pathing_train(group, train)
+  -- Check if the train is already in the pathing list
+  local train_id = train.id
+  if train.path_end_stop then
+    local stop_id = train.path_end_stop.unit_number
+    if group.trains_pathing and group.trains_pathing[train_id] then
+      if group.trains_pathing[train_id].stop_id ~= stop_id then
+        -- Need to change registered stop for this pathing train
+        game.print(tostring(game.tick)..": Changing registration of train "..tostring(train.id).." from stop "..tostring(group.trains_pathing[train_id].stop_id).." to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
+        local old_stop = group.global_stops[group.trains_pathing[train_id].stop_id]
+        old_stop.trains_pathing[train_id] = nil
+        if table_size(old_stop.trains_pathing) == 0 then
+          old_stop.trains_pathing = nil
+        end
+  
+        group.trains_pathing[train_id] = {train=train, stop_id=stop_id}
+        local new_stop = group.global_stops[stop_id]
+        new_stop.trains_pathing = new_stop.trains_pathing or {}
+        new_stop.trains_pathing[train_id] = train
+        update_limits(group)
+      else
+        -- Already registered as pathing to the correct stop, do nothing
+      end
+    else
+      -- Train has a destination stop but it is not registered with the group
+      game.print(tostring(game.tick)..": Registering train "..tostring(train.id).." as pathing to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
+      local new_stop = group.global_stops[stop_id]
+      new_stop.trains_pathing = new_stop.trains_pathing or {}
+      new_stop.trains_pathing[train_id] = train
+      group.trains_pathing[train_id] = {train=train, stop_id=stop_id}
+      -- Schedule temp stops so the stop limit can be reset
+      schedule_temp_stop(group, train)
+      update_limits(group)
+    end
+  else
+    -- Train is not pathing to a station, do nothing
+  end
+end
+
+
+
 -- Loop through waiting trains and see if we can dispatch them
 local function update_trains(group)
   
@@ -263,21 +306,35 @@ local function update_trains(group)
       if not stop.open or stop.open > 0 then
         -- This stop needs a train. Find the best one
         local stop_surface = stop.entity.surface
+        local stop_position = stop.entity.position
         
         -- Find the closest train to this stop, and save if it's the shortest trip overall
         for train_id,train in pairs(group.trains_waiting) do
           -- Check if there is somewhere we can send this train
           local train_surface = train.carriages[1].surface
+          local train_position = train.carriages[1].position
           -- Check that this stop is accessible from the train's current surface
           local link = group.surface_set.origins[train_surface.index][stop_surface.index]
-          if link and link.cost < best_cost then
-            best_link = link
-            best_cost = link.cost
-            best_stop = stop
-            best_stop_id = stop_id
-            best_train = train
-            best_train_id = train_id
-            game.print(tostring(game.tick)..": Found better trip from surface "..train_surface.name.." to surface "..stop_surface.name.." with cost "..tostring(best_cost))
+          if link then
+            -- Surface is accessible. Use link cost
+            local path_cost = link.cost or 0
+            if link.position then
+              -- Add distance to and from the link
+              path_cost = path_cost + util.distance(train_position, link.position) + util.distance(link.position, stop_position)
+            else
+              -- No link needed, add simple distance
+              path_cost = path_cost + util.distance(train_position, stop_position)
+            end
+            -- Save the lowest cost path
+            if path_cost < best_cost then
+              best_link = link
+              best_cost = path_cost
+              best_stop = stop
+              best_stop_id = stop_id
+              best_train = train
+              best_train_id = train_id
+              game.print(tostring(game.tick)..": Found better trip from surface "..train_surface.name.." to surface "..stop_surface.name.." with cost "..tostring(best_cost))
+            end
           end
         end
       end
@@ -365,7 +422,7 @@ local function reserve_stop(group, train)
   table.remove(schedule.records, schedule.current)
   train.schedule = schedule
   train.go_to_station(schedule.current)
-  game.print(tostring(game.tick)..": Opened slot for Train "..tostring(train.id).." and commanded it to station "..station)
+  game.print(tostring(game.tick)..": Opened slot for Train "..tostring(train.id).." and commanded it to station "..tostring(stop_id).." "..station)
 end
 
 
@@ -378,6 +435,7 @@ return {
   remove_stop = remove_stop,
   update_limits = update_limits,
   add_waiting_train = add_waiting_train,
+  add_pathing_train = add_pathing_train,
   update_trains = update_trains,
   update_train_id = update_train_id,
   schedule_temp_stop = schedule_temp_stop,

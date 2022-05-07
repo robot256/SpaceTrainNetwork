@@ -32,11 +32,11 @@ function find_elevator_surfaces(surface)
   if current_zone == planet_zone then
     results.adjacent = results.orbit
     results.start_on_surface = true
-    results.path_cost = radius
+    results.path_cost = radius * ELEVATOR_COST_MULTIPLIER
   elseif current_zone == orbit_zone then
     results.adjacent = results.planet
     results.start_on_surface = false
-    results.path_cost = radius/5
+    results.path_cost = radius/5 * ELEVATOR_COST_MULTIPLIER
   end
   
   return results

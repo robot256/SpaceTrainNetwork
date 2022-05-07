@@ -21,6 +21,8 @@ NAME_ELEVATOR_STOP = "se-space-elevator-train-stop"
 NAME_ELEVATOR_ENTITY = "se-space-elevator"
 NAME_GLOBAL_LIMIT_SIGNAL = "signal-global-train-limit"
 
+ELEVATOR_COST_MULTIPLIER = 10  -- Nauvis orbit is 5000*10 = 50,000 tile cost
+
 
 util = require("util")
 zone_util = require("script/zone-util")
@@ -34,12 +36,13 @@ local function OnEntityRenamed(event)
   if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
     -- Reassign stop groups
     surface_graph.rename_stop(entity, event.old_name)
+    
   elseif entity.name == NAME_ELEVATOR_STOP then
     -- Elevator stops get renamed when they are created or when the user renames the elevator entity
     local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
     if elevator_surfaces.adjacent then
       local schedule = { {station = entity.backer_name, temporary = true} }
-      surface_graph.add_link(surface, elevator_surfaces.adjacent, schedule, elevator_surfaces.path_cost, true)  -- Only most recently built/renamed elevator will be sed
+      surface_graph.add_link(surface, elevator_surfaces.adjacent, schedule, elevator_surfaces.path_cost, entity.position, true)  -- Only most recently built/renamed elevator will be sed
     end
   end
 end
@@ -73,13 +76,7 @@ end
 -- Watch for when trains are stuck waiting for a destination
 local function OnTrainChangedState(event)
   --game.print(tostring(game.tick)..": Received on_train_changed_state event. train="..tostring(event.train)..", state="..tostring(event.train.state))
-  local train = event.train
-  if train.state == defines.train_state.destination_full then
-    surface_graph.add_waiting_train(train)
-  elseif train.state == defines.train_state.wait_station then
-    -- if a train that was in transit is now waiting at a station, then we should remove it from the in-transit list
-    surface_graph.train_state_changed(event)
-  end
+  surface_graph.train_state_changed(event)
 end
 
 -- Watch for when train id changes as carriages are added

@@ -119,10 +119,10 @@ end
 
 
 -- add_link: Registers two surfaces
-local function add_link(origin, destination, link_schedule, link_cost, update)
+local function add_link(origin, destination, link_schedule, link_cost, link_position, update)
   local origin_set = global.surface_set_map[origin.index]
   local destination_set = global.surface_set_map[destination.index]
-  local link_entry = {schedule = link_schedule, cost = link_cost}
+  local link_entry = {schedule = link_schedule, cost = link_cost, position = link_position}
   if origin_set then
     if destination_set then
       -- both are already in a set
@@ -135,7 +135,7 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
         end
         -- add new link
         origin_set.origins[origin.index][destination.index] = link_entry
-        
+        -- merge stop groups
         for name,group in pairs(destination_set.groups) do
           if origin_set.groups[name] then
             -- merge into existing group
@@ -145,16 +145,15 @@ local function add_link(origin, destination, link_schedule, link_cost, update)
             origin_set.groups[name] = group
           end
         end
-        
         update_set_limits(origin_set)
       else
         -- Already in the same set. Use this link stop if no link in this direction, or if this is cheaper
         if update or not origin_set.origins[origin.index][destination.index] then
-          if not origin_set.origins[origin.index][destination.index] or not link_cost or
-                (origin_set.origins[origin.index][destination.index].cost and 
-                 link_cost <= origin_set.origins[origin.index][destination.index].cost) then
+          --if not origin_set.origins[origin.index][destination.index] or not link_cost or
+          --      (origin_set.origins[origin.index][destination.index].cost and 
+          --       link_cost <= origin_set.origins[origin.index][destination.index].cost) then
             origin_set.origins[origin.index][destination.index] = link_entry
-          end
+          --end
         end
       end
     else
@@ -230,20 +229,6 @@ end
 
 
 
--- See if this train needs to be added to a group waiting to be dispatched
-local function add_waiting_train(train)
-  local surface = train.carriages[1].surface
-  local set = global.surface_set_map[surface.index]
-  if set then
-    local schedule = train.schedule
-    local station = schedule.records[schedule.current].station
-    local group = set.groups[station]
-    if group then
-      stop_group.add_waiting_train(group, train)
-    end
-  end
-end
-
 -- Update trains in this set waiting for dispatch
 local function update_set_trains(set)
   for name,group in pairs(set.groups) do
@@ -305,7 +290,22 @@ end
 local function train_state_changed(event)
   --game.print("Handling train_state_changed event")
   local train = event.train
-  if train.state == defines.train_state.wait_station then
+  
+  if train.state == defines.train_state.destination_full then
+    -- Train says all destinations are full. Check if it's waiting for a spot at a Global Stop Group and add to list.
+    local surface = train.carriages[1].surface
+    local set = global.surface_set_map[surface.index]
+    if set then
+      local schedule = train.schedule
+      local station = schedule.records[schedule.current].station
+      local group = set.groups[station]
+      if group then
+        stop_group.add_waiting_train(group, train)
+      end
+    end
+    
+  elseif train.state == defines.train_state.wait_station then
+    -- Train arrived at scheduled stop, either temporary or station.
     --game.print("Train "..tostring(train.id).." is now wait_station")
     local schedule = train.schedule
     local surface = train.carriages[1].surface
@@ -331,6 +331,22 @@ local function train_state_changed(event)
         end
       end
     end
+  
+  elseif train.state == defines.train_state.on_the_path then
+  --       (event.previous_state == defines.train_state.wait_station or
+  --        event.previous_state == defines.train_state.destination_full or
+  --        event.previous_state == defines.train_state.no_path or
+  --        event.previuos_state == defines.train_state.manual) then
+  
+    -- Train just started pathing to a destination. Check if it took a reservation at a Global Stop
+    local dest = train.path_end_stop
+    if dest and dest.name == NAME_GLOBAL_STOP then
+      -- Train is currently pathing directly to a global stop. Make sure it is on the list
+      local set = global.surface_set_map[dest.surface.index]
+      if set and set.groups[dest.backer_name] then
+        stop_group.add_pathing_train(set.groups[dest.backer_name], train)
+      end
+    end
   end
 end
 
@@ -346,7 +362,6 @@ return {
   rename_stop = rename_stop,
   update_all_limits = update_all_limits,
   update_all_trains = update_all_trains,
-  add_waiting_train = add_waiting_train,
   train_created = train_created,
   train_teleported = train_teleported,
   train_state_changed = train_state_changed,
