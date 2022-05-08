@@ -2,7 +2,7 @@
 
 
 -- Crude search for matching a planet/moon surface with its orbit.
-function find_elevator_surfaces(surface)
+local function find_elevator_surfaces(surface)
   local results = {}
   
   local current_zone = remote.call("space-exploration", "get_zone_from_surface_index", {surface_index=surface.index})

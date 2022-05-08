@@ -62,6 +62,13 @@ local function OnEntityRemoved(event)
   if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
     --log("> Removing stop "..tostring(entity.unit_number).." '"..entity.backer_name.."' on "..entity.surface.name)
     surface_graph.remove_stop(entity)
+  
+  elseif entity.name == NAME_ELEVATOR_ENTITY then
+    -- Elevator was destroyed/removed
+    local surface = entity.surface
+    local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
+    surface_graph.remove_link(surface, elevator_surfaces.adjacent)
+    surface_graph.remove_link(elevator_surfaces.adjacent, surface)
   end
 end
 
@@ -98,9 +105,10 @@ end
 local function register_events()
  
   -- Track Global Stops and Proxy Stops
-  entity_filters = {
+  local entity_filters = {
     {filter="name", name=NAME_GLOBAL_STOP},
     {filter="name", name=NAME_PROXY_STOP},
+    {filter="name", name=NAME_ELEVATOR_ENTITY},
   }
   script.on_event( defines.events.on_built_entity, OnEntityCreated, entity_filters )
   script.on_event( defines.events.on_robot_built_entity, OnEntityCreated, entity_filters )
@@ -109,6 +117,7 @@ local function register_events()
   script.on_event( defines.events.script_raised_revive, OnEntityCreated, entity_filters )
 
   script.on_event( defines.events.on_pre_player_mined_item, OnEntityRemoved, entity_filters )
+  script.on_event( defines.events.on_player_mined_entity, OnEntityRemoved, entity_filters )
   script.on_event( defines.events.on_robot_pre_mined, OnEntityRemoved, entity_filters )
   script.on_event( defines.events.on_entity_died, OnEntityRemoved, entity_filters )
   script.on_event( defines.events.script_raised_destroy, OnEntityRemoved, entity_filters )

@@ -87,6 +87,49 @@ local function remove_stop(group, entity)
   end
 end
 
+-- Purge stop group of ones on inaccessible surfaces
+local function purge_inaccessible_stops(group)
+  local set = group.surface_set
+  
+  for stop_id,stop_entry in pairs(group.global_stops) do
+    if not set.origins[stop_entry.entity.surface.index] then
+      -- This stop is on a surface not in this set. Remove from set. Any trains going to it will be forgotten
+      group.global_stops[stop_id] = nil
+    end
+  end
+  
+  for stop_id,proxy_stop in pairs(group.proxy_stops) do
+    if not set.origins[proxy_stop.entity.surface.index] then
+      -- This stop is on a surface not in this set. Remove from set.
+      group.proxy_stops[stop_id] = nil
+    end
+  end
+  
+  for train_id,train_entry in pairs(group.trains_pathing) do
+    if not group.global_stops[train_entry.stop_id] then
+      -- Train is pathing to a stop that was removed from the group
+      group.trains_pathing[train_id] = nil
+    end
+  end
+  
+  for train_id,train_entry in pairs(group.trains_arriving) do
+    if not group.global_stops[train_entry.stop_id] then
+      -- Train is arriving at a stop that was removed from the group
+      group.trains_pathing[train_id] = nil
+    end
+  end
+  
+  for train_id,train in pairs(group.trains_waiting) do
+    if not set.origins[train.carriages[1].surface.index] then
+      -- Train is waiting on a surface not in this set.
+      group.trains_waiting[train_id] = nil
+    end
+  end
+  
+end
+
+
+
 
 -- Update the train limits on all the stops in the group
 -- Global Train Limit signal: 
@@ -433,6 +476,7 @@ return {
   size = size,
   add_stop = add_stop,
   remove_stop = remove_stop,
+  purge_inaccessible_stops = purge_inaccessible_stops,
   update_limits = update_limits,
   add_waiting_train = add_waiting_train,
   add_pathing_train = add_pathing_train,

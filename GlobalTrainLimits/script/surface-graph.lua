@@ -1,31 +1,33 @@
 
-
+local surface_graph = {}
 
 local stop_group = require("script/stop-group")
 
 -- create_set: Make a new set with just one surface in it
-local function get_or_create_set(surface)
+function surface_graph.get_or_create_set(surface)
   local index = surface.index
   -- Make sure this surface is not already in a set
   if not global.surface_set_map[index] then
     -- make a new set for just this surface
     local new_set = {
       origins = {
-        [index] = {[index] = {schedule = nil, cost = 0}},
+        [index] = {[index] = {cost=0}},
       },
       groups = {}
     }
     table.insert(global.surface_set_list, new_set)
     global.surface_set_map[index] = new_set
+    -- Find all the stops on the surface already
+    surface_graph.add_all_stops(surface)
   end
   return global.surface_set_map[index]
 end
 
 -- add_waiting_train_stop: When a Global or Proxy Stop is created, find the appropriate surface group to put it in
-local function add_stop(entity)
+function surface_graph.add_stop(entity)
   local name = entity.backer_name
   local surface = entity.surface
-  local set = get_or_create_set(surface)
+  local set = surface_graph.get_or_create_set(surface)
   
   -- Check if this surface set has a group with this name already
   if set.groups[name] then
@@ -39,15 +41,15 @@ local function add_stop(entity)
 end
 
 -- Add all stops on the given surface (when linking a surface with existing stops)
-local function add_all_stops(surface)
+function surface_graph.add_all_stops(surface)
   local stops = surface.get_train_stops{name={NAME_GLOBAL_STOP, NAME_PROXY_STOP}}
   for i=1,#stops do
-    add_stop(stops[i])
+    surface_graph.add_stop(stops[i])
   end
 end
 
 -- Remove a stop from whatever set group it is in
-local function remove_stop(entity)
+function surface_graph.remove_stop(entity)
   local name = entity.backer_name
   local surface = entity.surface
   local set = global.surface_set_map[surface.index]
@@ -70,18 +72,18 @@ local function remove_stop(entity)
 end
 
 -- Remove all stops on the given surface (prior to deleting or unlinking the surface)
-local function remove_all_stops(surface)
+function surface_graph.remove_all_stops(surface)
   local stops = surface.get_train_stops{name={NAME_GLOBAL_STOP, NAME_PROXY_STOP}}
   for i=1,#stops do
-    remove_stop(stops[i])
+    surface_graph.remove_stop(stops[i])
   end
 end
 
 -- Rename a stop (move it to a different group)
-local function rename_stop(entity, old_name)
+function surface_graph.rename_stop(entity, old_name)
   local name = entity.backer_name
   local surface = entity.surface
-  local set = get_or_create_set(surface)
+  local set = surface_graph.get_or_create_set(surface)
   
   -- Remove this stop (by unit_number) from the old group
   if set.groups[old_name] then
@@ -92,7 +94,7 @@ local function rename_stop(entity, old_name)
   end
   -- Make a new group if necessary
   -- Add this stop to the new group
-  add_stop(entity)
+  surface_graph.add_stop(entity)
 end
 
 
@@ -104,7 +106,7 @@ local function update_set_limits(set)
 end
 
 -- Update all the limits in the game (performed every tick)
-local function update_all_limits()
+function surface_graph.update_all_limits()
   for i=1,#global.surface_set_list do
     update_set_limits(global.surface_set_list[i])
   end
@@ -112,120 +114,134 @@ end
 
 
 -- Create the global tables if necessary
-local function init_globals()
+function surface_graph.init_globals()
   global.surface_set_list = global.surface_set_list or {}
   global.surface_set_map = global.surface_set_map or {}
 end
 
 
--- add_link: Registers two surfaces
-local function add_link(origin, destination, link_schedule, link_cost, link_position, update)
-  local origin_set = global.surface_set_map[origin.index]
-  local destination_set = global.surface_set_map[destination.index]
+-- add_link: Registers two surfaces as connected
+function surface_graph.add_link(origin, destination, link_schedule, link_cost, link_position, update)
+  -- Make sure each surface is in a set, probably by itself, with all its stops catalogued
+  local origin_set = surface_graph.get_or_create_set(origin)
+  local destination_set = surface_graph.get_or_create_set(destination)
   local link_entry = {schedule = link_schedule, cost = link_cost, position = link_position}
-  if origin_set then
-    if destination_set then
-      -- both are already in a set
-      if origin_set ~= destination_set then
-        -- Merge two non-overlapping sets
-        -- merge link tables
-        for added_origin_index,added_origin_table in pairs(destination_set.origins) do
-          origin_set.origins[added_origin_index] = added_origin_table
-          global.surface_set_map[added_origin_index] = origin_set
-        end
-        -- add new link
-        origin_set.origins[origin.index][destination.index] = link_entry
-        -- merge stop groups
-        for name,group in pairs(destination_set.groups) do
-          if origin_set.groups[name] then
-            -- merge into existing group
-            stop_group.merge_groups(origin_set.groups[name], group)
-          else
-            -- name not present in origin set, add it directly
-            origin_set.groups[name] = group
-          end
-        end
-        update_set_limits(origin_set)
-      else
-        -- Already in the same set. Use this link stop if no link in this direction, or if this is cheaper
-        if update or not origin_set.origins[origin.index][destination.index] then
-          --if not origin_set.origins[origin.index][destination.index] or not link_cost or
-          --      (origin_set.origins[origin.index][destination.index].cost and 
-          --       link_cost <= origin_set.origins[origin.index][destination.index].cost) then
-            origin_set.origins[origin.index][destination.index] = link_entry
-          --end
-        end
-      end
-    else
-      -- add destination to origin's set, then add link
-      origin_set.origins[destination.index] = {}
+  
+  if origin_set == destination_set then
+    -- Already in the same set. Add the new link, or overwrite the old one if update=true
+    if update or not origin_set.origins[origin.index][destination.index] then
       origin_set.origins[origin.index][destination.index] = link_entry
-      global.surface_set_map[destination.index] = origin_set
-      add_all_stops(destination)
-      update_set_limits(origin_set)
     end
   else
-    if destination_set then
-      -- add origin to destination's set with link
-      destination_set.origins[origin.index][destination.index] = link_entry
-      global.surface_set_map[origin.index] = destination_set
-      add_all_stops(origin)
-      update_set_limits(destination_set)
-    else
-      -- make new set with origin and destination
-      local new_set = {
-        origins = {
-          [origin.index] = {
-            [destination.index] = link_entry  -- There is a path from origin to destination
-          },
-          [destination.index] = {  -- Destination is in the set, but there are no paths from it yet
-            [destination.index] = {cost=0}
-          },
-        },
-        groups = {}
-      }
-      table.insert(global.surface_set_list, new_set)
-      global.surface_set_map[origin.index] = new_set
-      global.surface_set_map[destination.index] = new_set
-      add_all_stops(origin)
-      add_all_stops(destination)
-      update_set_limits(new_set)
+    -- Merge two non-overlapping sets
+    -- merge link tables (since no surfaces are shared, all origins in destination_set are new to origin_set)
+    for added_origin_index,added_origin_table in pairs(destination_set.origins) do
+      origin_set.origins[added_origin_index] = added_origin_table
+      global.surface_set_map[added_origin_index] = origin_set
+    end
+    -- remove destination_set from global list
+    for i=1,#global.surface_set_list do
+      if global.surface_set_list[i] == destination_set then
+        table.remove(global.surface_set_list, i)
+        break
+      end
+    end
+    -- add new link
+    origin_set.origins[origin.index][destination.index] = link_entry
+    -- merge stop groups
+    for name,group in pairs(destination_set.groups) do
+      if origin_set.groups[name] then
+        -- merge into existing group
+        stop_group.merge_groups(origin_set.groups[name], group)
+      else
+        -- name not present in origin set, add it directly
+        origin_set.groups[name] = group
+      end
+    end
+    update_set_limits(origin_set)
+  end
+end
+
+
+-- Recursively look for new destinations attached to this one
+local function recursive_tree_search(set, start_index, found_list)
+  for new_id,link in pairs(set.origins[start_index]) do
+    -- Loop through all the links leaving from surface start_index
+    if not found_list[new_id] then
+      -- This endpoint not in the connected list yet
+      found_list[new_id] = true
+      -- Now add all the surfaces accessible from here too.
+      recursive_tree_search(set, new_id, found_list)
     end
   end
-
 end
+
 
 -- remove_link: Deregister a link and split surface set if needed
-local function remove_link(origin, destination)
-  local origin_set = global.surface_set_map[origin.index]
-  if not origin_set[origin.index][destination.index] then
+function surface_graph.remove_link(origin, destination)
+  local origin_set = surface_graph.get_or_create_set(origin)
+  
+  -- If there is not already a link from origin to destination, do nothing
+  if not origin_set.origins[origin.index][destination.index] then
     return
   end
   
-  -- Remove the link
-  origin_set[origin.index][destination.index] = nil
+  -- Remove the link from origin to destination
+  origin_set.origins[origin.index][destination.index] = nil
   
-  -- Now figure out if this surface pair is still connected
-  if origin_set[destination.index][origin.index] then
+  -- If there is still a link from destination to origin, do nothing
+  if origin_set.origins[destination.index][origin.index] then
     return
   end
+  
+  game.print(">>>>> SEPARATING SURFACES "..origin.name.." and "..destination.name.." <<<<<")
   
   -- There is no link in either direction now. Figure out of there are disjointed sets now
-  -- make a new set for the destination and its connections, to use if 
-  local destination_set = {
-    origins = {
-      [destination.index] = {}
-    },
-    groups = {}
-  }
+  local connected_to_origin = {[origin.index]=true}
+  recursive_tree_search(origin_set, origin.index, connected_to_origin)
   
-  -- TODO: Figure out how to do an efficient graph search
+  -- Now we have a dictionary of all the surfaces accessible from the origin.
+  -- (If there are one-way paths ending at the origin, we won't see them.)  TODO: Figure out if this matters
   
-  -- TODO: If they are disjoint, change the set assignment in global.surface_set_map for anything not connected to origin
+  -- Make a list of anything not connected
+  local not_connected = {}
+  for new_id,_ in pairs(origin_set.origins) do
+    if not connected_to_origin[new_id] then
+      not_connected[new_id] = true
+    end
+  end
   
+  -- Removing one link can create at most one new set
+  if next(not_connected) then
+    -- Make a new set for the disjointed surfaces
+    local new_set = {
+      origins = {},
+      groups = {}
+    }
+    table.insert(global.surface_set_list, new_set)
+    
+    -- Move the disconnected surfaces to the new set
+    for new_id,_ in pairs(not_connected) do
+      -- Connections in the surfaces are still valid, move link tables
+      new_set.origins[new_id] = origin_set.origins[destination.index]
+      origin_set.origins[destination.index] = nil
+      -- Update link in global map for this surface
+      global.surface_set_map[new_id] = new_set
+    end
+    
+    -- Copy the stop groups, then purge each side of stops on the wrong surfaces
+    new_set.groups = table.deepcopy(origin_set.groups)
+    for name,group in pairs(origin_set.groups) do
+      game.print("running purge on origin group "..name)
+      stop_group.purge_inaccessible_stops(group)
+    end
+    for name,group in pairs(new_set.groups) do
+      game.print("running purge on new group "..name)
+      group.surface_set = new_set
+      stop_group.purge_inaccessible_stops(group)
+    end
+  end
 end
-
-
 
 
 
@@ -237,14 +253,14 @@ local function update_set_trains(set)
 end
 
 -- Update all the trains waiting for dispatch (performed every several ticks)
-local function update_all_trains()
+function surface_graph.update_all_trains()
   for i=1,#global.surface_set_list do
     update_set_trains(global.surface_set_list[i])
   end
 end
 
 -- When a train is created, update train ids in groups
-local function train_created(event)
+function surface_graph.train_created(event)
   --game.print("Handling train_created event")
   local train = event.train
   local surface = train.carriages[1].surface
@@ -264,7 +280,7 @@ local function train_created(event)
 end
 
 -- When a train is teleported, and is now bound for a global stop, update the schedule
-local function train_teleported(event)
+function surface_graph.train_teleported(event)
   --game.print("Handling train_teleported event")
   local train = event.train
   local id = train.id
@@ -287,7 +303,7 @@ end
 
 
 -- When a train arrives at a station
-local function train_state_changed(event)
+function surface_graph.train_state_changed(event)
   --game.print("Handling train_state_changed event")
   local train = event.train
   
@@ -351,18 +367,4 @@ local function train_state_changed(event)
 end
 
 
-return {
-  init_globals = init_globals,
-  add_link = add_link, 
-  remove_link = remove_link,
-  add_stop = add_stop,
-  add_all_stops = add_all_stops,
-  remove_stop = remove_stop,
-  remove_all_stops = remove_all_stops,
-  rename_stop = rename_stop,
-  update_all_limits = update_all_limits,
-  update_all_trains = update_all_trains,
-  train_created = train_created,
-  train_teleported = train_teleported,
-  train_state_changed = train_state_changed,
-}
+return surface_graph
