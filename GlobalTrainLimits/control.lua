@@ -23,6 +23,8 @@ NAME_GLOBAL_LIMIT_SIGNAL = "signal-global-train-limit"
 
 ELEVATOR_COST_MULTIPLIER = 10  -- Nauvis orbit is 5000*10 = 50,000 tile cost
 
+DEBUG = false
+
 
 util = require("util")
 zone_util = require("script/zone-util")
@@ -88,13 +90,19 @@ end
 
 -- Watch for when train id changes as carriages are added
 local function OnTrainCreated(event)
+  --log("Train "..tostring(event.train.id).." created"..(event.old_train_id_1 and (" from "..tostring(event.old_train_id_1)..(event.old_train_id_2 and (" and "..tostring(event.old_train_id_2)) or "")) or ""))
   surface_graph.train_created(event)
 end
 
 -- Watch for when trains are first teleported to another surface
 local function OnTrainTeleported(event)
   -- Check if this train in is transit to a global stop
+  --log("Train "..tostring(event.train.id).." started teleport: "..serpent.line(event))
   surface_graph.train_teleported(event)
+end
+
+local function OnTrainTeleportFinished(event)
+  --log("Train "..tostring(event.train.id).." finished teleport: "..serpent.line(event).." "..serpent.line(event.train.get_contents()))
 end
 
 local function init_globals()
@@ -130,7 +138,8 @@ local function register_events()
   -- Track train states
   script.on_event( defines.events.on_train_changed_state, OnTrainChangedState )
   script.on_event( defines.events.on_train_created, OnTrainCreated )
-  script.on_event( remote.call("space-exploration", "get_on_space_elevator_teleported_train_event"), OnTrainTeleported )
+  script.on_event( remote.call("space-exploration", "get_on_train_teleport_started_event"), OnTrainTeleported )
+  script.on_event( remote.call("space-exploration", "get_on_train_teleport_finished_event"), OnTrainTeleportFinished )
   
   script.on_event( defines.events.on_tick, OnTick )
   

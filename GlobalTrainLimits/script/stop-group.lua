@@ -217,9 +217,11 @@ local function update_limits(group, verbose)
             arriving_string = arriving_string.." "..tostring(id)..":"..tostring(t.state)
           end
         end
-        game.print(string.format("%d: Stop %d '%s' >> {signal=%d, vanilla=%d, stopped=%d, pathing=%d, arriving=%d, duplicate=%d, new_limit=%d, open=%d}  vanilla={%s} arriving={%s}",
+        if DEBUG then
+          game.print(string.format("%d: Stop %d '%s' >> {signal=%d, vanilla=%d, stopped=%d, pathing=%d, arriving=%d, duplicate=%d, new_limit=%d, open=%d}  vanilla={%s} arriving={%s}",
                                   game.tick, id, stop.entity.backer_name, stop.limit, real_trains_count, stopped_trains_count, pathing_trains_count,
                                   arriving_trains_count, duplicate_trains_count, new_limit, stop.open, vanilla_string, arriving_string))
+        end
       end
     else
       -- Not connected to circuit network, no limit
@@ -325,7 +327,7 @@ local function update_trains(group)
     if train_entry.train.state == defines.train_state.wait_station then
       if train_entry.train.station == group.global_stops[train_entry.stop_id].entity then
         -- Train has reserved the other stop
-        game.print(tostring(game.tick)..": Tick update completing trip for arriving train "..tostring(id))
+        --game.print(tostring(game.tick)..": Tick update completing trip for arriving train "..tostring(id))
         complete_trip(group, train_entry.train)
       end
     else
@@ -409,6 +411,7 @@ local function update_trains(group)
         best_train.schedule = schedule
       else
         -- Already on same surface, add temporary stop to avoid distractions
+        game.print(tostring(game.tick)..": Dispatchng train "..tostring(best_train_id).." on "..best_stop.entity.surface.name)
         schedule_temp_stop(group, best_train)
       end
     else
