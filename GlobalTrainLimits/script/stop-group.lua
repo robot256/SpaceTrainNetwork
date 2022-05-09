@@ -57,7 +57,8 @@ local function add_stop(group, entity)
       entity = entity
     }
     -- No wires allowed on Proxy stops
-    entity.disconnect_neighbour()
+    entity.disconnect_neighbour(defines.wire_type.red)
+    entity.disconnect_neighbour(defines.wire_type.green)
     -- Always set Proxy train limit 0, so that trains are held at their current stop until we modify their schedule
     entity.trains_limit = 0
   end
@@ -258,6 +259,11 @@ local function schedule_temp_stop(group, train)
   local entity = group.global_stops[group.trains_pathing[train.id].stop_id].entity
   local rail = entity.connected_rail
   local direction = entity.connected_rail_direction
+  
+  if not rail then
+    game.print("ERRORORORORORROR: No rail connected to station "..tostring(entity.unit_number).." "..entity.backer_name)
+    return
+  end
   
   local record = {rail=rail, rail_direction=direction, temporary=true, wait_conditions={{type="time", ticks=0, compare_type="and"}}}
   

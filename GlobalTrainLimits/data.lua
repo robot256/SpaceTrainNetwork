@@ -8,6 +8,7 @@ local PROXY_NAME = "proxy-train-stop"
 -- Make the Global Train Stop and the Proxy Train Stop
 
 local proxy_stop = flib.copy_prototype(data.raw["train-stop"]["train-stop"], PROXY_NAME)
+proxy_stop.collision_mask = {}
 local proxy_item = flib.copy_prototype(data.raw["item"]["train-stop"], PROXY_NAME)
 proxy_item.order = proxy_item.order.."y"
 local icon_overlay = { { icon = "__base__/graphics/icons/signal/signal_P.png", icon_size = 64, scale = 0.25, shift = {-8,8}, tint = {32,255,32,255} } }
