@@ -116,7 +116,7 @@ local function purge_inaccessible_stops(group)
   for train_id,train_entry in pairs(group.trains_arriving) do
     if not group.global_stops[train_entry.stop_id] then
       -- Train is arriving at a stop that was removed from the group
-      group.trains_pathing[train_id] = nil
+      group.trains_arriving[train_id] = nil
     end
   end
   
@@ -154,8 +154,8 @@ local function update_limits(group, verbose)
         cb.enable_disable = false
       end
       -- Set the stop train limit, taking into account en route trains that haven't reserved it yet
-      local pathing_trains_count = (stop.trains_pathing and table_size(stop.trains_pathing) or 0)  -- en route, no reservation
-      local arriving_trains_count = (stop.trains_arriving and table_size(stop.trains_arriving) or 0)  -- just arrived, no reservation yet
+      local pathing_trains_count = (stop.trains_pathing and table_size(stop.trains_pathing)) or 0     -- en route, no reservation
+      local arriving_trains_count = (stop.trains_arriving and table_size(stop.trains_arriving)) or 0  -- just arrived, no reservation yet
       local real_trains_count = stop.entity.trains_count   -- have reservation
       local stopped_trains_count = (stop.entity.get_stopped_train() and 1) or 0  -- stopped at station
       local duplicate_trains_count = 0
@@ -245,9 +245,6 @@ local function complete_trip(group, train)
   local stop = group.global_stops[stop_id]
   -- Remove train from arriving
   stop.trains_arriving[train.id] = nil
-  if table_size(stop.trains_arriving) == 0 then
-    stop.trains_arriving = nil
-  end
   group.trains_arriving[train.id] = nil
   -- Update limits now that this train has a real reservation
   --game.print("complete updating limits")
@@ -289,10 +286,7 @@ local function add_pathing_train(group, train)
         game.print(tostring(game.tick)..": Changing registration of train "..tostring(train.id).." from stop "..tostring(group.trains_pathing[train_id].stop_id).." to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
         local old_stop = group.global_stops[group.trains_pathing[train_id].stop_id]
         old_stop.trains_pathing[train_id] = nil
-        if table_size(old_stop.trains_pathing) == 0 then
-          old_stop.trains_pathing = nil
-        end
-  
+        
         group.trains_pathing[train_id] = {train=train, stop_id=stop_id}
         local new_stop = group.global_stops[stop_id]
         new_stop.trains_pathing = new_stop.trains_pathing or {}
@@ -462,9 +456,6 @@ local function reserve_stop(group, train)
   stop.trains_arriving[train.id] = train
   group.trains_arriving[train.id] = {train=train, stop_id=stop_id}
   stop.trains_pathing[train.id] = nil
-  if table_size(stop.trains_pathing) == 0 then
-    stop.trains_pathing = nil
-  end
   group.trains_pathing[train.id] = nil
   -- Update the limit so we have a slot but don't send anything there
   --game.print("reserve updating limits")
