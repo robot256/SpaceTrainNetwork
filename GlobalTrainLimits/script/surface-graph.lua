@@ -281,15 +281,16 @@ end
 
 -- When a train is teleported, and is now bound for a global stop, update the schedule
 function surface_graph.train_teleported(event)
-  --game.print("Handling train_teleported event")
   local train = event.train
   local id = train.id
   local surface = train.carriages[1].surface
   local set = global.surface_set_map[surface.index]
+  log_msg("Handling train_teleport_started event: Train "..tostring(id).." on "..surface.name.." used to be train "..tostring(event.old_train_id_1).." on "..game.surfaces[event.old_surface_index].name, DEBUG)
   if set then
     -- Aftr teleporting, always update train IDs
     for name,group in pairs(set.groups) do
       stop_group.update_train_id(group, train, event.old_train_id_1)
+      stop_group.set_train_teleporting(group, train)
     end
     -- Then check if this is the last transit in the trip, and schedule waypoint to destination stop
     local schedule = train.schedule
@@ -301,6 +302,20 @@ function surface_graph.train_teleported(event)
   end
 end
 
+function surface_graph.train_teleport_finished(event)
+  local train = event.train
+  local id = train.id
+  local surface = train.carriages[1].surface
+  local set = global.surface_set_map[surface.index]
+  log_msg("Handling train_teleport_finished event: Train "..tostring(id).." on "..surface.name.." is complete.", DEBUG)
+  if set then
+    -- Aftr teleporting, always update train IDs
+    for name,group in pairs(set.groups) do
+      stop_group.clear_train_teleporting(group, train)
+    end
+  end
+end
+
 
 -- When a train arrives at a station
 function surface_graph.train_state_changed(event)
@@ -308,15 +323,27 @@ function surface_graph.train_state_changed(event)
   local train = event.train
   
   if train.state == defines.train_state.destination_full then
-    -- Train says all destinations are full. Check if it's waiting for a spot at a Global Stop Group and add to list.
-    local surface = train.carriages[1].surface
-    local set = global.surface_set_map[surface.index]
-    if set then
-      local schedule = train.schedule
-      local station = schedule.records[schedule.current].station
-      local group = set.groups[station]
-      if group then
-        stop_group.add_waiting_train(group, train)
+    if (train.front_rail and (train.front_rail.name == NAME_ELEVATOR_RAIL or train.front_rail.name == NAME_ELEVATOR_CURVE)) or 
+       (train.back_rail and (train.back_rail.name == NAME_ELEVATOR_RAIL or train.back_rail.name == NAME_ELEVATOR_CURVE)) then
+      -- Waiting inside the space elevator.  The train should stay in the Pathing list.
+      local surface = train.carriages[1].surface
+      local set = global.surface_set_map[surface.index]
+      if set then
+        for name,group in pairs(set.groups) do
+          stop_group.set_train_teleporting(group, train)
+        end
+      end
+    else
+      -- Train says all destinations are full. Check if it's waiting for a spot at a Global Stop Group and add to list.
+      local surface = train.carriages[1].surface
+      local set = global.surface_set_map[surface.index]
+      if set then
+        local schedule = train.schedule
+        local station = schedule.records[schedule.current].station
+        local group = set.groups[station]
+        if group then
+          stop_group.add_waiting_train(group, train)
+        end
       end
     end
     
@@ -328,7 +355,7 @@ function surface_graph.train_state_changed(event)
     local set = global.surface_set_map[surface.index]
     if set then
       -- Temporary stop that is not the end of the schedule
-      if schedule.records[schedule.current].temporary and #schedule.records > schedule.current then
+      if schedule.records[schedule.current].temporary and schedule.records[schedule.current].rail and #schedule.records > schedule.current then
         --game.print("Just stopped at a temporary stop")
         local station = schedule.records[schedule.current+1].station
         local group = set.groups[station]

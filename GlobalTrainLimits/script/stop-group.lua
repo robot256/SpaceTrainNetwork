@@ -1,18 +1,19 @@
 
 -- Create an empty stop group
-local function create_group(set)
+local function create_group(name, set)
   return {
+    name = name,
     global_stops = {},  -- index by unit_number
     proxy_stops = {},   -- index by unit_number
     trains_waiting = {},  -- index by train_id: Trains without a reservation at a global stop
     trains_pathing = {},  -- index by train_id: Trains traveling to a global stop
     trains_arriving = {}, -- index by train_id: Trains at a global stop, after the slot is opened but before they reserve it
-    surface_set = set,
+    surface_set = set
   }
 end
 
 
--- Merge group2 into group1 (modify group1 and destroy group2)
+-- Merge group2 into group1 (modify group1 and destroy group2) (assume they have the same names)
 local function merge_groups(group1, group2)
   for unit_number,global_stop_entry in pairs(group2.global_stops) do
     group1.global_stops[unit_number] = global_stop_entry
@@ -142,6 +143,9 @@ local function update_limits(group, verbose)
   -- Step 1: Get the user train limit signal from every flobal stop, and the inbound train
   --         And disable the "set train limit" control behavior
   for id,stop in pairs(group.global_stops) do
+    if not group.name then
+      group.name = stop.entity.backer_name
+    end
     if (stop.entity.get_circuit_network(defines.wire_type.green) or 
         stop.entity.get_circuit_network(defines.wire_type.red) ) then
       local changed = false
@@ -217,11 +221,10 @@ local function update_limits(group, verbose)
             arriving_string = arriving_string.." "..tostring(id)..":"..tostring(t.state)
           end
         end
-        if DEBUG then
-          game.print(string.format("%d: Stop %d '%s' >> {signal=%d, vanilla=%d, stopped=%d, pathing=%d, arriving=%d, duplicate=%d, new_limit=%d, open=%d}  vanilla={%s} arriving={%s}",
-                                  game.tick, id, stop.entity.backer_name, stop.limit, real_trains_count, stopped_trains_count, pathing_trains_count,
-                                  arriving_trains_count, duplicate_trains_count, new_limit, stop.open, vanilla_string, arriving_string))
-        end
+        log_msg(string.format("Stop %d '%s' >> {signal=%d, vanilla=%d, stopped=%d, pathing=%d, arriving=%d, duplicate=%d, new_limit=%d, open=%d}  vanilla={%s} arriving={%s}",
+                              id, stop.entity.backer_name, stop.limit, real_trains_count, stopped_trains_count, pathing_trains_count,
+                              arriving_trains_count, duplicate_trains_count, new_limit, stop.open, vanilla_string, arriving_string),
+                LOG_DEBUG)
       end
     else
       -- Not connected to circuit network, no limit
@@ -236,6 +239,40 @@ end
 -- Add a train that is waiting for a stop in this group (in Destination Full state)
 local function add_waiting_train(group, train)
   group.trains_waiting[train.id] = train
+  log_msg("Adding train "..tostring(train.id).." waiting for space at "..group.name, LOG_INFO)
+end
+
+
+local function set_train_teleporting(group, train)
+  local id = train.id
+  if group.trains_pathing[id] then
+    log_msg("Started Teleporting train "..tostring(train.id).." pathing to "..group.name, LOG_INFO)
+    group.trains_pathing[id].teleporting = true
+  elseif group.trains_arriving[id] then
+    group.trains_arriving[id].teleporting = true
+  end
+end
+
+local function clear_train_teleporting(group, train)
+  local id = train.id
+  if group.trains_pathing[id] then
+    log_msg("Finished Teleporting train "..tostring(train.id), LOG_INFO)
+    group.trains_pathing[id].teleporting = nil
+  elseif group.trains_arriving[id] then
+    group.trains_arriving[id].teleporting = nil
+  end
+end
+
+
+-- Remove this train from the record wherever it might be
+local function remove_train(group, train_id)
+  for id,stop_entry in pairs(group.global_stops) do
+    stop_entry.trains_arriving[id] = nil
+    stop_entry.trains_pathing[id] = nil
+  end
+  group.trains_pathing[id] = nil
+  group.trains_waiting[id] = nil
+  group.trains_arriving[id] = nil
 end
 
 
@@ -249,7 +286,7 @@ local function complete_trip(group, train)
   -- Update limits now that this train has a real reservation
   --game.print("complete updating limits")
   update_limits(group)
-  game.print(tostring(game.tick)..": Train "..tostring(train.id).." finished arriving at "..tostring(stop_id).." "..train.station.backer_name)
+  log_msg("Train "..tostring(train.id).." finished arriving at "..tostring(stop_id).." "..train.station.backer_name, LOG_INFO)
 end
 
 
@@ -260,7 +297,12 @@ local function schedule_temp_stop(group, train)
   local direction = entity.connected_rail_direction
   
   if not rail then
-    game.print("ERRORORORORORROR: No rail connected to station "..tostring(entity.unit_number).." "..entity.backer_name)
+    log_msg("ERROR: No rail connected to station "..tostring(entity.unit_number).." "..entity.backer_name..", so Train "..tostring(train.id).." cannot path to it.", LOG_INFO)
+    return
+  end
+  
+  if rail.surface ~= train.carriages[1].surface then
+    log_msg("ERROR: Train "..tostring(train.id).." is not on the same surface as stop "..tostring(group.trains_pathing[train.id].stop_id).." "..entity.backer_name.." yet.")
     return
   end
   
@@ -269,7 +311,7 @@ local function schedule_temp_stop(group, train)
   local schedule = train.schedule
   table.insert(schedule.records, schedule.current, record)
   
-  game.print(tostring(game.tick)..": Adding temp stop to train "..tostring(train.id).." approaching stop "..tostring(entity.unit_number).." "..entity.backer_name)
+  log_msg("Adding temp stop to train "..tostring(train.id).." approaching stop "..tostring(entity.unit_number).." "..entity.backer_name)
   train.schedule = schedule
 end
 
@@ -283,11 +325,11 @@ local function add_pathing_train(group, train)
     if group.trains_pathing and group.trains_pathing[train_id] then
       if group.trains_pathing[train_id].stop_id ~= stop_id then
         -- Need to change registered stop for this pathing train
-        game.print(tostring(game.tick)..": Changing registration of train "..tostring(train.id).." from stop "..tostring(group.trains_pathing[train_id].stop_id).." to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
+        log_msg("Changing registration of train "..tostring(train.id).." from stop "..tostring(group.trains_pathing[train_id].stop_id).." to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
         local old_stop = group.global_stops[group.trains_pathing[train_id].stop_id]
         old_stop.trains_pathing[train_id] = nil
         
-        group.trains_pathing[train_id] = {train=train, stop_id=stop_id}
+        group.trains_pathing[train_id] = {train=train, stop_id=stop_id, tick=game.tick}
         local new_stop = group.global_stops[stop_id]
         new_stop.trains_pathing = new_stop.trains_pathing or {}
         new_stop.trains_pathing[train_id] = train
@@ -297,11 +339,11 @@ local function add_pathing_train(group, train)
       end
     else
       -- Train has a destination stop but it is not registered with the group
-      game.print(tostring(game.tick)..": Registering train "..tostring(train.id).." as pathing to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
+      log_msg("Registering train "..tostring(train.id).." as pathing to stop "..tostring(stop_id).." "..train.path_end_stop.backer_name)
       local new_stop = group.global_stops[stop_id]
       new_stop.trains_pathing = new_stop.trains_pathing or {}
       new_stop.trains_pathing[train_id] = train
-      group.trains_pathing[train_id] = {train=train, stop_id=stop_id}
+      group.trains_pathing[train_id] = {train=train, stop_id=stop_id, tick=game.tick}
       -- Schedule temp stops so the stop limit can be reset
       schedule_temp_stop(group, train)
       update_limits(group)
@@ -317,25 +359,71 @@ end
 local function update_trains(group)
   
   -- Update arriving trains (no event is triggered when they switch from "wait at temp stop" to "wait at real stop" on the same tile)
-  for id, train_entry in pairs(group.trains_arriving) do
-    if train_entry.train.state == defines.train_state.wait_station then
-      if train_entry.train.station == group.global_stops[train_entry.stop_id].entity then
-        -- Train has reserved the other stop
-        --game.print(tostring(game.tick)..": Tick update completing trip for arriving train "..tostring(id))
-        complete_trip(group, train_entry.train)
+  for id,train_entry in pairs(group.trains_arriving) do
+    if train_entry.train and train_entry.train.valid then
+      if train_entry.train.state == defines.train_state.wait_station then
+        local station = train_entry.train.station
+        if station == group.global_stops[train_entry.stop_id].entity then
+          -- Train has reserved the other stop
+          --game.print(tostring(game.tick)..": Tick update completing trip for arriving train "..tostring(id))
+          complete_trip(group, train_entry.train)
+        elseif station and station.name ~= NAME_ELEVATOR_STOP then
+          -- We are stopped at the wrong station!
+          log_msg("Purging train "..tostring(id).." from arriving at "..tostring(group.name).." because it is stopped at "..tostring(station.unit_number).." "..station.backer_name)
+          group.global_stops[train_entry.stop_id].trains_arriving[id] = nil
+          group.trains_arriving[id] = nil
+        end
+      else
+        --game.print(tostring(game.tick)..": Tick update still waiting for arriving train "..tostring(id).." at stop "..tostring(train_entry.stop_id).." "..group.global_stops[train_entry.stop_id].entity.backer_name)
       end
     else
-      --game.print(tostring(game.tick)..": Tick update still waiting for arriving train "..tostring(id).." at stop "..tostring(train_entry.stop_id).." "..group.global_stops[train_entry.stop_id].entity.backer_name)
+      log_msg("Purging invalid train "..tostring(id).." from arriving at "..tostring(group.name))
+      group.global_stops[train_entry.stop_id].trains_arriving[id] = nil
+      group.trains_arriving[id] = nil
+    end
+  end
+  
+  -- Make sure pathing trains are still pathing
+  for id,train_entry in pairs(group.trains_pathing) do
+    if train_entry.train and train_entry.train.valid then
+      local state = train_entry.train.state
+      if train_entry.teleporting or 
+         state == defines.train_state.on_the_path or
+         state == defines.train_state.arrive_signal or
+         state == defines.train_state.wait_signal or
+         state == defines.train_state.arrive_station or
+         (state == defines.train_state.wait_station and train_entry.train.station.name == NAME_ELEVATOR_STOP)
+         then
+        -- Train is correctly transiting to a place
+        -- TODO: Make sure it's going to *this* stop still
+        
+      else
+        -- Train is not pathing anymore
+        log_msg("Removing train "..tostring(id).." on surface "..train_entry.train.carriages[1].surface.name.." in state "..tostring(state).." which is no longer pathing to "..tostring(group.name))
+        group.global_stops[train_entry.stop_id].trains_pathing[id] = nil
+        group.trains_pathing[id] = nil
+      end
+    else
+      log_msg("Purging invalid train "..tostring(id).." from pathing to "..tostring(group.name))
+      group.global_stops[train_entry.stop_id].trains_pathing[id] = nil
+      group.trains_pathing[id] = nil
     end
   end
   
   -- Make sure waiting trains are still waiting
   for id,train in pairs(group.trains_waiting) do
-    if train.state ~= defines.train_state.destination_full then
-      -- Train already dispatched itself somewhere else
+    if train and train.valid then
+      if train.state ~= defines.train_state.destination_full then
+        -- Train already dispatched itself somewhere else
+        log_msg("Train "..tostring(id).." is no longer waiting for "..tostring(group.name))
+        group.trains_waiting[id] = nil
+      end
+    else
+      log_msg("Purging invalid train "..tostring(id).." from waiting for "..tostring(group.name))
       group.trains_waiting[id] = nil
     end
   end
+  
   
   -- As long as any trains are waiting, look for open stations.
   -- Pick trains greedily based on lowest cost of travel
@@ -348,7 +436,8 @@ local function update_trains(group)
     local best_link = nil
     
     for stop_id,stop in pairs(group.global_stops) do
-      if not stop.open or stop.open > 0 then
+      -- Make sure it is unlimited or has space, and is connected to a valid rail segment.
+      if (not stop.open or stop.open > 0) and stop.entity.connected_rail then
         -- This stop needs a train. Find the best one
         local stop_surface = stop.entity.surface
         local stop_position = stop.entity.position
@@ -378,7 +467,7 @@ local function update_trains(group)
               best_stop_id = stop_id
               best_train = train
               best_train_id = train_id
-              game.print(tostring(game.tick)..": Found better trip from surface "..train_surface.name.." to surface "..stop_surface.name.." with cost "..tostring(best_cost))
+              log_msg("Found better trip from surface "..train_surface.name.." to surface "..stop_surface.name.." with cost "..tostring(best_cost), LOG_DEBUG)
             end
           end
         end
@@ -389,11 +478,12 @@ local function update_trains(group)
     if best_stop then
       -- Update globals and indicate that the train has a reservation
       group.trains_waiting[best_train_id] = nil
-      group.trains_pathing[best_train_id] = {train=best_train, stop_id=best_stop_id}
+      group.trains_pathing[best_train_id] = {train=best_train, stop_id=best_stop_id, tick=game.tick}
       best_stop.trains_pathing = best_stop.trains_pathing or {}
       best_stop.trains_pathing[best_train_id] = best_train
       update_limits(group)
       
+      log_msg("Dispatchng train "..tostring(best_train_id).." on "..best_train.carriages[1].surface.name.." to stop "..tostring(best_stop_id).." on "..best_stop.entity.surface.name)
       if best_link.schedule then
         -- Add link to schedule
         local schedule = best_train.schedule
@@ -401,11 +491,10 @@ local function update_trains(group)
           table.insert(schedule.records, schedule.current+k-1, record)
         end
         -- Set train schedule. Current stop index stays the same, but now it is the temporary elevator stop
-        game.print(tostring(game.tick)..": Adding Elevator transit to train "..tostring(best_train_id).." to "..best_stop.entity.surface.name)
+        log_msg("Adding Elevator transit to train "..tostring(best_train_id).." to "..best_stop.entity.surface.name)
         best_train.schedule = schedule
       else
         -- Already on same surface, add temporary stop to avoid distractions
-        game.print(tostring(game.tick)..": Dispatchng train "..tostring(best_train_id).." on "..best_stop.entity.surface.name)
         schedule_temp_stop(group, best_train)
       end
     else
@@ -420,25 +509,31 @@ end
 -- Update train id links if this train is here
 local function update_train_id(group, train, old_train_id)
   if group.trains_waiting[old_train_id] then
-    --game.print("Updating waiting train id "..tostring(old_train_id).." to "..tostring(train.id))
+    log_msg("Updating waiting train id "..tostring(old_train_id).." to "..tostring(train.id), LOG_DEBUG)
+    local tick
+    if type(group.trains_waiting[old_train_id]) == "list" then
+      tick = group.trains_waiting[old_train_id].tick
+    end
     group.trains_waiting[old_train_id] = nil
-    group.trains_waiting[train.id] = train
+    group.trains_waiting[train.id] = {train=train, tick=tick}
   end
   if group.trains_pathing and group.trains_pathing[old_train_id] then
-    --game.print("Updating pathing train id "..tostring(old_train_id).." to "..tostring(train.id))
-    local stop_index = group.trains_pathing[old_train_id].stop_id
-    local stop = group.global_stops[stop_index]
+    log_msg("Updating pathing train id "..tostring(old_train_id).." to "..tostring(train.id), LOG_DEBUG)
+    local stop_id = group.trains_pathing[old_train_id].stop_id
+    local tick = group.trains_pathing[old_train_id].tick
+    local stop = group.global_stops[stop_id]
     stop.trains_pathing[train.id] = train
-    group.trains_pathing[train.id] = {train=train, stop_id=stop_index}
+    group.trains_pathing[train.id] = {train=train, stop_id=stop_id, tick=tick}
     stop.trains_pathing[old_train_id] = nil
     group.trains_pathing[old_train_id] = nil
   end
   if group.trains_arriving and group.trains_arriving[old_train_id] then
-    --game.print("Updating arriving train id "..tostring(old_train_id).." to "..tostring(train.id))
-    local stop_index = group.trains_arriving[old_train_id].stop_id
-    local stop = group.global_stops[stop_index]
+    log_msg("Updating arriving train id "..tostring(old_train_id).." to "..tostring(train.id), LOG_DEBUG)
+    local stop_id = group.trains_arriving[old_train_id].stop_id
+    local tick = group.trains_arriving[old_train_id].tick
+    local stop = group.global_stops[stop_id]
     stop.trains_arriving[train.id] = train
-    group.trains_arriving[train.id] = {train=train, stop_id=stop_index}
+    group.trains_arriving[train.id] = {train=train, stop_id=stop_id, tick=tick}
     stop.trains_arriving[old_train_id] = nil
     group.trains_arriving[old_train_id] = nil
   end
@@ -454,7 +549,7 @@ local function reserve_stop(group, train)
   -- Move this train from pathing to arriving
   stop.trains_arriving = stop.trains_arriving or {}
   stop.trains_arriving[train.id] = train
-  group.trains_arriving[train.id] = {train=train, stop_id=stop_id}
+  group.trains_arriving[train.id] = {train=train, stop_id=stop_id, tick=game.tick}
   stop.trains_pathing[train.id] = nil
   group.trains_pathing[train.id] = nil
   -- Update the limit so we have a slot but don't send anything there
@@ -465,7 +560,7 @@ local function reserve_stop(group, train)
   table.remove(schedule.records, schedule.current)
   train.schedule = schedule
   train.go_to_station(schedule.current)
-  game.print(tostring(game.tick)..": Opened slot for Train "..tostring(train.id).." and commanded it to station "..tostring(stop_id).." "..station)
+  log_msg("Opened slot for Train "..tostring(train.id).." and commanded it to station "..tostring(stop_id).." "..station)
 end
 
 
@@ -485,5 +580,7 @@ return {
   schedule_temp_stop = schedule_temp_stop,
   reserve_stop = reserve_stop,
   complete_trip = complete_trip,
-  clear_train = clear_train,
+  remove_train = remove_train,
+  set_train_teleporting = set_train_teleporting,
+  clear_train_teleporting = clear_train_teleporting
 }

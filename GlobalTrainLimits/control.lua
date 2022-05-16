@@ -19,6 +19,8 @@ NAME_GLOBAL_STOP = "global-train-stop"
 NAME_PROXY_STOP = "proxy-train-stop"
 NAME_ELEVATOR_STOP = "se-space-elevator-train-stop"
 NAME_ELEVATOR_ENTITY = "se-space-elevator"
+NAME_ELEVATOR_RAIL = "se-space-elevator-straight-rail"
+NAME_ELEVATOR_CURVE = "se-space-elevator-curved-rail"
 NAME_GLOBAL_LIMIT_SIGNAL = "signal-global-train-limit"
 
 ELEVATOR_COST_MULTIPLIER = 10  -- Nauvis orbit is 5000*10 = 50,000 tile cost
@@ -29,6 +31,18 @@ DEBUG = false
 util = require("util")
 zone_util = require("script/zone-util")
 surface_graph = require("script/surface-graph")
+
+
+LOG_INFO = 1
+LOG_DEBUG = 2
+function log_msg(msg, level)
+  if not level or level < 2 or DEBUG == true then
+    game.print(tostring(game.tick)..": "..msg)
+    log(msg)
+  end
+end
+
+
 
 
 -- Reassign group when station is renamed
@@ -103,6 +117,12 @@ end
 
 local function OnTrainTeleportFinished(event)
   --log("Train "..tostring(event.train.id).." finished teleport: "..serpent.line(event).." "..serpent.line(event.train.get_contents()))
+  surface_graph.train_teleport_finished(event)
+end
+
+local function OnTrainScheduleChanged(event)
+  local train = event.train
+  log_msg("Train "..tostring(train.id).." on "..train.carriages[1].surface.name.." schedule changed to "..serpent.line(train.schedule))
 end
 
 local function init_globals()
@@ -140,6 +160,8 @@ local function register_events()
   script.on_event( defines.events.on_train_created, OnTrainCreated )
   script.on_event( remote.call("space-exploration", "get_on_train_teleport_started_event"), OnTrainTeleported )
   script.on_event( remote.call("space-exploration", "get_on_train_teleport_finished_event"), OnTrainTeleportFinished )
+  
+  script.on_event( defines.events.on_train_schedule_changed, OnTrainScheduleChanged )
   
   script.on_event( defines.events.on_tick, OnTick )
   
