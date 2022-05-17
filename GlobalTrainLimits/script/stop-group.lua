@@ -239,14 +239,14 @@ end
 -- Add a train that is waiting for a stop in this group (in Destination Full state)
 local function add_waiting_train(group, train)
   group.trains_waiting[train.id] = train
-  log_msg("Adding train "..tostring(train.id).." waiting for space at "..group.name, LOG_INFO)
+  log_msg("Adding train "..tostring(train.id).." waiting for space at "..tostring(group.name), LOG_INFO)
 end
 
 
 local function set_train_teleporting(group, train)
   local id = train.id
   if group.trains_pathing[id] then
-    log_msg("Started Teleporting train "..tostring(train.id).." pathing to "..group.name, LOG_INFO)
+    log_msg("Started Teleporting train "..tostring(train.id).." pathing to "..tostring(group.name), LOG_INFO)
     group.trains_pathing[id].teleporting = true
   elseif group.trains_arriving[id] then
     group.trains_arriving[id].teleporting = true
