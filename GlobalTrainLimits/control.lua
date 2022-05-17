@@ -43,23 +43,26 @@ function log_msg(msg, level)
 end
 
 
+local function elevator_added(entity)
+  local surface = entity.surface
+  local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
+  if elevator_surfaces.adjacent then
+    local schedule = { {station = entity.backer_name, temporary = true} }
+    surface_graph.add_link(surface, elevator_surfaces.adjacent, schedule, elevator_surfaces.path_cost, entity.position, true)  -- Only most recently built/renamed elevator will be used
+  end
+end
 
 
 -- Reassign group when station is renamed
 local function OnEntityRenamed(event)
   local entity = event.entity
-  local surface = entity.surface
   if entity.name == NAME_GLOBAL_STOP or entity.name == NAME_PROXY_STOP then
     -- Reassign stop groups
     surface_graph.rename_stop(entity, event.old_name)
     
   elseif entity.name == NAME_ELEVATOR_STOP then
     -- Elevator stops get renamed when they are created or when the user renames the elevator entity
-    local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
-    if elevator_surfaces.adjacent then
-      local schedule = { {station = entity.backer_name, temporary = true} }
-      surface_graph.add_link(surface, elevator_surfaces.adjacent, schedule, elevator_surfaces.path_cost, entity.position, true)  -- Only most recently built/renamed elevator will be sed
-    end
+    elevator_added(entity)
   end
 end
 
@@ -83,8 +86,30 @@ local function OnEntityRemoved(event)
     -- Elevator was destroyed/removed
     local surface = entity.surface
     local elevator_surfaces = zone_util.find_elevator_surfaces(surface)
-    surface_graph.remove_link(surface, elevator_surfaces.adjacent)
-    surface_graph.remove_link(elevator_surfaces.adjacent, surface)
+      
+    -- Check if there are other elevators still linking these surfaces?
+    local elevators = surface.find_entities_filtered{name=NAME_ELEVATOR_ENTITY}
+    local link_restored = false
+    for _,elevator in pairs(elevators) do
+      if elevator ~= entity and elevator.valid then
+        game.print("Elevator was removed, but there is still one left at "..util.positiontostr(elevator.position))
+        -- At least one remaining elevator entity, find its stop
+        local stop_one = surface.find_entities_filtered{name=NAME_ELEVATOR_STOP, position=elevator.position, radius=elevator.get_radius(), limit=1}[1]
+        game.print("Adding elevator ".. stop_one.backer_name.." on "..surface.name)
+        elevator_added(stop_one)  -- Only last one will be used...
+        local stop_two = elevator_surfaces.adjacent.find_entities_filtered{name=NAME_ELEVATOR_STOP, position=elevator.position, radius=elevator.get_radius(), limit=1}[1]
+        game.print("Adding elevator ".. stop_two.backer_name.." on "..elevator_surfaces.adjacent.name)
+        elevator_added(stop_two)  -- Only last one will be used...
+        link_restored = true
+      end
+    end
+    
+    if not link_restored then
+      -- No remaining elevator entities
+      surface_graph.remove_link(surface, elevator_surfaces.adjacent)
+      surface_graph.remove_link(elevator_surfaces.adjacent, surface)
+    end
+
   end
 end
 
@@ -125,9 +150,22 @@ local function OnTrainScheduleChanged(event)
   log_msg("Train "..tostring(train.id).." on "..train.carriages[1].surface.name.." schedule changed to "..serpent.line(train.schedule))
 end
 
+
+
+local function scan_for_elevators()
+  for id,surface in pairs(game.surfaces) do
+    local elevator_stops = surface.find_entities_filtered{name=NAME_ELEVATOR_STOP}
+    for i=1,#elevator_stops do
+      elevator_added(elevator_stops[i])  -- Only last one will be used...
+    end
+  end
+end
+
 local function init_globals()
   surface_graph.init_globals()
+  scan_for_elevators()
 end
+
 
 -- register events
 local function register_events()
