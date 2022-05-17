@@ -35,7 +35,7 @@ function surface_graph.add_stop(entity)
     stop_group.add_stop(set.groups[name], entity)
   else
     -- Make a new group
-    set.groups[name] = stop_group.create_group(set)
+    set.groups[name] = stop_group.create_group(name, set)
     stop_group.add_stop(set.groups[name], entity)
   end
 end
