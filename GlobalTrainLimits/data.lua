@@ -18,6 +18,7 @@ local proxy_recipe = flib.copy_prototype(data.raw["recipe"]["train-stop"], PROXY
 data:extend{proxy_stop, proxy_item, proxy_recipe}
 
 local global_stop = flib.copy_prototype(data.raw["train-stop"]["train-stop"], GLOBAL_NAME)
+global_stop.color = {0,0.83,1}
 local global_item = flib.copy_prototype(data.raw["item"]["train-stop"], GLOBAL_NAME)
 global_item.order = global_item.order.."x"
 icon_overlay[1].icon = "__base__/graphics/icons/signal/signal_G.png"
