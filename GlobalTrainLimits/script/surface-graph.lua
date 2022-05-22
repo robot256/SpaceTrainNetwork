@@ -285,7 +285,7 @@ function surface_graph.train_teleported(event)
   local id = train.id
   local surface = train.carriages[1].surface
   local set = global.surface_set_map[surface.index]
-  log_msg("Handling train_teleport_started event: Train "..tostring(id).." on "..surface.name.." used to be train "..tostring(event.old_train_id_1).." on "..game.surfaces[event.old_surface_index].name, DEBUG)
+  log_msg("Handling train_teleport_started event: Train "..tostring(id).." on "..surface.name.." used to be train "..tostring(event.old_train_id_1).." on "..game.surfaces[event.old_surface_index].name, LOG_DEBUG)
   if set then
     -- Aftr teleporting, always update train IDs
     for name,group in pairs(set.groups) do
@@ -307,7 +307,7 @@ function surface_graph.train_teleport_finished(event)
   local id = train.id
   local surface = train.carriages[1].surface
   local set = global.surface_set_map[surface.index]
-  log_msg("Handling train_teleport_finished event: Train "..tostring(id).." on "..surface.name.." is complete.", DEBUG)
+  log_msg("Handling train_teleport_finished event: Train "..tostring(id).." on "..surface.name.." is complete.", LOG_DEBUG)
   if set then
     -- Aftr teleporting, always update train IDs
     for name,group in pairs(set.groups) do

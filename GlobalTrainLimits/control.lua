@@ -26,6 +26,7 @@ NAME_GLOBAL_LIMIT_SIGNAL = "signal-global-train-limit"
 ELEVATOR_COST_MULTIPLIER = 10  -- Nauvis orbit is 5000*10 = 50,000 tile cost
 
 DEBUG = false
+DEBUG_PRINTS = false
 
 
 util = require("util")
@@ -37,8 +38,10 @@ LOG_INFO = 1
 LOG_DEBUG = 2
 function log_msg(msg, level)
   if not level or level < 2 or DEBUG == true then
-    game.print(tostring(game.tick)..": "..msg)
     log(msg)
+  end
+  if not level or level < 2 or DEBUG_PRINTS == true then
+    game.print(tostring(game.tick)..": "..msg)
   end
 end
 
